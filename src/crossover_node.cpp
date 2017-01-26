@@ -348,7 +348,7 @@ int row_grid=-1;
 bool OBV_IS_ENABLED = false;
 bool OBV_IS_READY = false;
 inline bool IS_AGL_NOT_TOO_LOW() {
-  return (state_out.data[pz]-state_out.data[tz] > 1.0 ? true:false);
+  return (state_out.data[pz]-state_out.data[tz] > 0.5 ? true:false);
 }
 inline void FIND_OBSTACLE();
 tf::Vector3 v_avoid;
@@ -1886,12 +1886,15 @@ inline void FIND_OBSTACLE()
         y_conv = Min(Max(y_conv,-VEL_MAX),0);
         y_conv = -y_conv - VEL_MAX-0.2;
       }
+
       if(fabs(x_conv) < 0.4) x_conv=0;
+
+      if(num_grid < 10) y_conv =0;
       tf::Vector3 vel_b_avoid(x_conv,
                               y_conv,
                               0);
       // Uncommend this line below to visualize from terminal
-      // printf("\n%s", buffer);
+      printf("\n%s", buffer);
       
       // convert this to earth frame
 
