@@ -221,6 +221,7 @@ double MIN_HACC_ALLOW;
 double CAMERA_PITCH;
 double HOME_OFF_x;
 double HOME_OFF_y;
+bool REALSENSE_ENABLE=false;
 
 
 enum {
@@ -335,6 +336,22 @@ enum {
   DRIVE_EIGHT_EQUATION=1
 };
 /////////////////////////////////////
+// Create a context object. This object owns the handles to all connected realsense devices.
+rs::context ctx;
+rs::device * dev = ctx.get_device(0);
+// Determine depth value corresponding to one meter
+const uint16_t one_meter = static_cast<uint16_t>(3.0f / dev->get_depth_scale());  
+float x_av=0.0;
+float y_av=0.0;
+int num_grid=0;
+int row_grid=-1;
+bool OBV_IS_ENABLED = false;
+bool OBV_IS_READY = false;
+inline bool IS_AGL_NOT_TOO_LOW() {
+  return (state_out.data[pz]-state_out.data[tz] > 1.5 ? true:false);
+}
+inline void FIND_OBSTACLE();
+
 
 int main(int argc, char **argv)
 {
@@ -376,6 +393,8 @@ int main(int argc, char **argv)
   n.param("HOME_OFF_y", HOME_OFF_y, 0.0);
   n.param("HOME_LAT_NO_GPS", GPS_HOME.lat, 7.0064177);
   n.param("HOME_LNG_NO_GPS", GPS_HOME.lng, 100.5025051);
+
+  n.param("REALSENSE_ENABLE", REALSENSE_ENABLE, false);
   // n.param("DEBUG_CONTROL_OUT" , DEBUG_CONTROL_OUT, false);
   // n.param("DEBUG_PPID_OUT"    , DEBUG_PPID_OUT, false);
   // n.param("DEBUG_PPID2_OUT"   , DEBUG_PPID2_OUT, false);
@@ -456,30 +475,30 @@ int main(int argc, char **argv)
 
 
 
-    // Create a context object. This object owns the handles to all connected realsense devices.
-    rs::context ctx;
-    // printf("There are %d connected RealSense devices.\n", ctx.get_device_count());
-    // if(ctx.get_device_count() == 0) return EXIT_FAILURE;
+    if(REALSENSE_ENABLE)
+    {
+      printf("There are %d connected RealSense devices.\n", ctx.get_device_count());
+      if(ctx.get_device_count() == 0) 
+      {
+        printf("There is no realsense connected\nObstacle avoidance disabled");
+        OBV_IS_ENABLED = false;
+        OBV_IS_READY = false;
+      }else
+      {
+        OBV_IS_ENABLED = true;
+        // OBV_IS_READY = true;
+      }     
+      // This tutorial will access only a single device, but it is trivial to extend to multiple devices
+      printf("\nUsing device 0, an %s\n", dev->get_name());
+      printf("    Serial number: %s\n", dev->get_serial());
+      printf("    Firmware version: %s\n", dev->get_firmware_version());
+      // Configure depth to run at VGA resolution at 30 frames per second
+      dev->enable_stream(rs::stream::depth, 640, 480, rs::format::z16, 30);
+      dev->start();
+    }
+    
 
-    // This tutorial will access only a single device, but it is trivial to extend to multiple devices
-    rs::device * dev = ctx.get_device(0);
-    printf("\nUsing device 0, an %s\n", dev->get_name());
-    printf("    Serial number: %s\n", dev->get_serial());
-    printf("    Firmware version: %s\n", dev->get_firmware_version());
-
-    // Configure depth to run at VGA resolution at 30 frames per second
-    dev->enable_stream(rs::stream::depth, 640, 480, rs::format::z16, 30);
-
-    dev->start();
-
-    // Determine depth value corresponding to one meter
-    const uint16_t one_meter = static_cast<uint16_t>(1.5f / dev->get_depth_scale());
-    float x=0.0;
-    float y=0.0;
-    int num=0;
-    int row=-1;
-
-
+  
 
 
 
@@ -589,42 +608,6 @@ int main(int argc, char **argv)
       }
       pose.publish(poseAndOffsetMsg);
       pose_ts = poseMsg.header.stamp;
-
-      
-      // //for keep error data only
-      // msf_errorMsg.header = ukf_errorMsg.header = inav_errorMsg.header = poseMsg.header;
-
-      
-      //   msf_errorMsg.pose.pose.position.x = state_out.data[px];// - poseMsg.pose.pose.position.x;
-      //   msf_errorMsg.pose.pose.position.y = state_out.data[py];// - poseMsg.pose.pose.position.y;
-      //   msf_errorMsg.pose.pose.position.z = state_out.data[pz];// - poseMsg.pose.pose.position.z;
-      //   msf_errorMsg.twist.twist.linear.x = state_out.data[vx];// - navvelMsg.twist.linear.x;
-      //   msf_errorMsg.twist.twist.linear.y = state_out.data[vy];// - navvelMsg.twist.linear.y;
-      //   msf_errorMsg.twist.twist.linear.z = state_out.data[vz];// - navvelMsg.twist.linear.z;
-
-      //   ukf_errorMsg.pose.pose.position.x = ukfMsg.pose.pose.position.x;// - poseMsg.pose.pose.position.x;
-      //   ukf_errorMsg.pose.pose.position.y = ukfMsg.pose.pose.position.y;// - poseMsg.pose.pose.position.y;
-      //   ukf_errorMsg.pose.pose.position.z = ukfMsg.pose.pose.position.z;// - poseMsg.pose.pose.position.z;
-      //   ukf_errorMsg.twist.twist.linear.x = ukfMsg.twist.twist.linear.x;// - navvelMsg.twist.linear.x;
-      //   ukf_errorMsg.twist.twist.linear.y = ukfMsg.twist.twist.linear.y;// - navvelMsg.twist.linear.y;
-      //   ukf_errorMsg.twist.twist.linear.z = ukfMsg.twist.twist.linear.z;// - navvelMsg.twist.linear.z;
-
-      //   inav_errorMsg.pose.pose.position.x = inertial_gps.pose.pose.position.x;// - poseMsg.pose.pose.position.x;
-      //   inav_errorMsg.pose.pose.position.y = inertial_gps.pose.pose.position.y;// - poseMsg.pose.pose.position.y;
-      //   inav_errorMsg.pose.pose.position.z = inertial_gps.pose.pose.position.z;// - poseMsg.pose.pose.position.z;
-      //   inav_errorMsg.twist.twist.linear.x = inertial_gps_vel.twist.linear.x;//- navvelMsg.twist.linear.x;
-      //   inav_errorMsg.twist.twist.linear.y = inertial_gps_vel.twist.linear.y;//- navvelMsg.twist.linear.y;
-      //   inav_errorMsg.twist.twist.linear.z = inertial_gps_vel.twist.linear.z;//- navvelMsg.twist.linear.z;
-
-
-      
-
-      // msf_error_pub.publish(msf_errorMsg);
-      // ukf_error_pub.publish(ukf_errorMsg);
-      // inav_error_pub.publish(inav_errorMsg);
-
-
-
     }
     if(state_fix_ts != state_out.header.stamp) {
       state_fix_ts = state_out.header.stamp;
@@ -706,64 +689,21 @@ int main(int argc, char **argv)
     //UPDATE STATUS
     static ros::Time depth_task_stamp = cur_time;
 
-    if(cur_time - depth_task_stamp > ros::Duration(0.033)) { //low priority task 0.5 hz 
+    if(cur_time - depth_task_stamp > ros::Duration(0.033)) { //Depth from realsense task 30 hz 
       depth_task_stamp = cur_time;
-      // This call waits until a new coherent set of frames is available on a device
-      // Calls to get_frame_data(...) and get_frame_timestamp(...) on a device will return stable values until wait_for_frames(...) is called
-      dev->wait_for_frames();
-
-      // Retrieve depth data, which was previously configured as a 640 x 480 image of 16-bit depth values
-      const uint16_t * depth_frame = reinterpret_cast<const uint16_t *>(dev->get_frame_data(rs::stream::depth));
-
-      // Print a simple text-based representation of the image, by breaking it into 10x20 pixel regions and and approximating the coverage of pixels within one meter
-      char buffer[(640/10+1)*(480/20)+1];
-      char * out = buffer;
-      int coverage[64] = {};
-      for(int y=0; y<480; ++y)
-      {
-          for(int x=0; x<640; ++x)
-          {
-              int depth = *depth_frame++;
-              if(depth > 0 && depth < one_meter) ++coverage[x/10];
-          }
-
-          if(y%20 == 19)
-          {
-              for(int & c : coverage)
-              {
-                  *out++ = " .:nhWWWW"[c/25]; //scale of depth (char)
-                  c = 0;
-              }
-              *out++ = '\n';
-          }
+      // when realsense is bad all system gone!! be careful 
+      // if(ctx.get_device_count()==0)  {
+      //   OBV_IS_ENABLED = false;
+      //   OBV_IS_READY = false;
+      // }else{
+      //   OBV_IS_ENABLED = true;
+      // }
+      if(OBV_IS_ENABLED /*&& IS_AGL_NOT_TOO_LOW()*/) {
+        OBV_IS_READY=true;
       }
-      *out++ = 0;
 
-      x=0;
-      y=0;
-      num=0;
-      for(int i=0;i<(640/10+1)*(480/20)+1;i++)
-      {
-          if(i%(640/10+1)==0) row++;
-
-          if(buffer[i]=='W')
-              {
-                  x+=(i%(640/10+1));
-                  y+=row;
-                  num++;
-              }
-      }
-      if(num!=0)
-      {
-          x/=num;
-          y/=num;
-          row=-1;
-      }
-      x-=32;
-      y-=11;
-      // printf("\n%s", buffer);
-      printf("\nweight = %.2f\t%.2f\t%d", x,y,num);
-
+      if(OBV_IS_READY)
+        FIND_OBSTACLE();
     }
 
 
@@ -1857,6 +1797,103 @@ void DRIVE_PATH(bool READY ) {
 
   local_pos_pub.publish(pose);
 
+
+
+}
+
+
+
+
+
+
+
+
+
+inline void FIND_OBSTACLE() 
+{
+        // This call waits until a new coherent set of frames is available on a device
+      // Calls to get_frame_data(...) and get_frame_timestamp(...) on a device will return stable values until wait_for_frames(...) is called
+      dev->wait_for_frames();
+
+      // Retrieve depth data, which was previously configured as a 640 x 480 image of 16-bit depth values
+      const uint16_t * depth_frame = reinterpret_cast<const uint16_t *>(dev->get_frame_data(rs::stream::depth));
+
+      // Print a simple text-based representation of the image, by breaking it into 10x20 pixel regions and and approximating the coverage of pixels within one meter
+      char buffer[(640/10+1)*(480/20)+1];
+      char * out = buffer;
+      int coverage[64] = {};
+      for(int y=0; y<480; ++y)
+      {
+          for(int x=0; x<640; ++x)
+          {
+              int depth = *depth_frame++;
+              if(depth > 0 && depth < one_meter) ++coverage[x/10];
+          }
+
+          if(y%20 == 19)
+          {
+              for(int & c : coverage)
+              {
+                  *out++ = " .:nhWWWW"[c/25]; //scale of depth (char)
+                  c = 0;
+              }
+              *out++ = '\n';
+          }
+      }
+      *out++ = 0;
+
+      x_av=32;
+      y_av=11;
+      num_grid=0;
+      for(int i=0;i<(640/10+1)*(480/20)+1;i++)
+      {
+          if(i%(640/10+1)==0) row_grid++;
+
+          if(buffer[i]=='W')
+              {
+                  x_av+=(i%(640/10+1));
+                  y_av+=row_grid;
+                  num_grid++;
+              }
+      }
+      if(num_grid!=0)
+      {
+          x_av/=num_grid;
+          y_av/=num_grid;
+          row_grid=-1;
+      }
+      x_av-=32;
+      y_av-=11;
+      // printf("\n%s", buffer);
+      // printf("\nweight = %.2f\t%.2f\t%d", x_av,y_av,num_grid);
+
+
+      //if x_av positive mean quad must left (+y body vel)
+      //if y_av positive mean object below quad must go up (+z body vel)
+      //center is zero,zero
+      //if num is positive quad must 
+      //y_av not used yet (height avoidance)
+      const float VEL_MAX = 0.5;
+      float x_conv = -((float)num_grid)/450;
+      float y_conv = VEL_MAX*(x_av/32)/**(((float)num_grid)/250)*/; //if num_grid is low (<20) mean obstacle maybe noise so be relax
+
+      if(y_conv>0)
+      { 
+        y_conv = Min(Max(y_conv,0),VEL_MAX);
+        y_conv = -y_conv + VEL_MAX+0.2;
+      }
+      else //(y_conv<0)
+      {
+        y_conv = Min(Max(y_conv,-VEL_MAX),0);
+        y_conv = -y_conv - VEL_MAX-0.2;
+      }
+      if(fabs(x_conv) < 0.4) x_conv=0;
+      tf::Vector3 vel_b_avoid(x_conv,
+                              y_conv,
+                              0);
+      printf("\n%s", buffer);
+      printf("avoid = %.2f\t%.2f\n", vel_b_avoid.x(),vel_b_avoid.y()/**(((float)num_grid)/400)*/);
+      // vel_
 
 
 }
