@@ -76,7 +76,7 @@ float GPS_velAcc = 10;
 float GPS_vel_EAST = 0;
 float GPS_vel_NORTH = 0;
 
-
+tf::Quaternion Qwi_;
 
 float R[3][3] = {{1, 0, 0},
 {0, 1, 0},
@@ -333,7 +333,7 @@ ros::Publisher local_pos_pub;
 bool RESET_POSE_INIT_REQUEST = true;
 void DRIVE_PATH(bool READY );
 enum {
-  DRIVE_EIGHT_EQUATION=1
+  DRIVE_EIGHT_EQUATION=0
 };
 /////////////////////////////////////
 // Create a context object. This object owns the handles to all connected realsense devices.
@@ -351,6 +351,7 @@ inline bool IS_AGL_NOT_TOO_LOW() {
   return (state_out.data[pz]-state_out.data[tz] > 1.5 ? true:false);
 }
 inline void FIND_OBSTACLE();
+tf::Vector3 v_avoid;
 
 
 int main(int argc, char **argv)
@@ -637,15 +638,11 @@ int main(int argc, char **argv)
     // }
     if (navvel_ts != navvelOdomMsg.header.stamp) {
       //convert twist msg to body-frame due to ROS REF
-      tf::Quaternion q_(imuMsg.orientation.x,
-                        imuMsg.orientation.y,
-                        imuMsg.orientation.z,
-                        imuMsg.orientation.w);
       tf::Quaternion q_vec(navvelMsg.twist.linear.x,
                            navvelMsg.twist.linear.y,
                            navvelMsg.twist.linear.z,
                            0);
-      q_vec = q_.inverse() * q_vec * q_;
+      q_vec = Qwi_.inverse() * q_vec * Qwi_;
       tf::Vector3 v_body = q_vec.getAxis();
       navvelOdomMsg.twist.twist.linear.x = v_body.x();
       navvelOdomMsg.twist.twist.linear.y = v_body.y();
@@ -796,20 +793,17 @@ int main(int argc, char **argv)
       vis_status_pub.publish(vis_vel);
 
 
-
-    if( quad_stateMsg.armed && 
-        quad_stateMsg.mode == "OFFBOARD") {
-
-      /* use bool for utility other check state eg.
-       battery voltage , load cpu etc*/
-      DRIVE_PATH(true);
-
-    }else{
-      /* we must continue to send msg although not offb mode */
-      RESET_POSE_INIT_REQUEST=true;
-    }
-
-
+      if( quad_stateMsg.armed && 
+          quad_stateMsg.mode == "OFFBOARD") {
+        /* use bool for utility other check state eg.
+         battery voltage , load cpu etc*/
+        DRIVE_PATH(true);
+      }
+      else
+      {
+        /* we must continue to send msg although not offb mode */
+        RESET_POSE_INIT_REQUEST=true;
+      }
     }
 
 
@@ -1301,10 +1295,10 @@ inline void Init_filter() {
 void imu_callback(const sensor_msgs::Imu::ConstPtr& data) {
   imuMsg = *data;
 
-  tf::Quaternion Qwi_(imuMsg.orientation.x,
-                     imuMsg.orientation.y,
-                     imuMsg.orientation.z,
-                     imuMsg.orientation.w);
+  Qwi_=tf::Quaternion(imuMsg.orientation.x,
+                      imuMsg.orientation.y,
+                      imuMsg.orientation.z,
+                      imuMsg.orientation.w);
   tf::Matrix3x3 m(Qwi_);
   m.getRPY(ROLL_IMU, PITCH_IMU, YAW_IMU);
   //stack for vision alignment
@@ -1783,6 +1777,9 @@ void DRIVE_PATH(bool READY ) {
     // sayend(t);
   }
   else{
+    des_hx_init+=v_avoid.x()*0.1;
+    des_hy_init+=v_avoid.y()*0.1;
+
     des_hx = des_hx_init;
     des_hy = des_hy_init;
     des_hz = des_hz_init;
@@ -1891,9 +1888,16 @@ inline void FIND_OBSTACLE()
       tf::Vector3 vel_b_avoid(x_conv,
                               y_conv,
                               0);
-      printf("\n%s", buffer);
+      // Uncommend this line below to visualize from terminal
+      // printf("\n%s", buffer);
+      
+      // convert this to earth frame
+
+      tf::Quaternion vel_b_q(vel_b_avoid.x(),
+                             vel_b_avoid.y(),
+                             vel_b_avoid.z(),
+                             0);
+      v_avoid = (Qwi_*vel_b_q*Qwi_.inverse()).getAxis();
+
       printf("avoid = %.2f\t%.2f\n", vel_b_avoid.x(),vel_b_avoid.y()/**(((float)num_grid)/400)*/);
-      // vel_
-
-
 }
