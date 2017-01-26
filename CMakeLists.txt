@@ -33,6 +33,7 @@ find_package(catkin REQUIRED COMPONENTS
   nav_msgs
   sensor_fusion_comm
   message_generation
+  librealsense
 )
 ## Generate messages in the 'msg' folder
 add_message_files(

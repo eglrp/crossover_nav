@@ -40,6 +40,10 @@
 #include <termios.h>
 
 
+// First include the librealsense C++ header file
+#include <librealsense/rs.hpp>
+
+
 //function convert arduino to ros
 //------------ROS version-------
 // #include <iostream>
@@ -450,16 +454,36 @@ int main(int argc, char **argv)
   // ros::Subscriber ukf_sub = n.subscribe<nav_msgs::Odometry>("/odometry/filtered", 10, ukf_callback);
 
 
-  //initialize imu covariance
-  // for (int i = 0; i < 9; i++)
-  // {
-  //   imuMsg.orientation_covariance[i] = 0;
-  //   imuMsg.angular_velocity_covariance[i] = 0;
-  //   imuMsg.linear_acceleration_covariance[i] = 0;
-  //   gpsrawMsg.position_covariance[i] = 0;
-  //   altMsg.pose.covariance[i] = 0;
-  // }
-  // memset(&altMsg.pose.covariance,0,sizeof(altMsg.pose.covariance));
+
+
+    // Create a context object. This object owns the handles to all connected realsense devices.
+    rs::context ctx;
+    // printf("There are %d connected RealSense devices.\n", ctx.get_device_count());
+    // if(ctx.get_device_count() == 0) return EXIT_FAILURE;
+
+    // This tutorial will access only a single device, but it is trivial to extend to multiple devices
+    rs::device * dev = ctx.get_device(0);
+    printf("\nUsing device 0, an %s\n", dev->get_name());
+    printf("    Serial number: %s\n", dev->get_serial());
+    printf("    Firmware version: %s\n", dev->get_firmware_version());
+
+    // Configure depth to run at VGA resolution at 30 frames per second
+    dev->enable_stream(rs::stream::depth, 640, 480, rs::format::z16, 30);
+
+    dev->start();
+
+    // Determine depth value corresponding to one meter
+    const uint16_t one_meter = static_cast<uint16_t>(1.5f / dev->get_depth_scale());
+    float x=0.0;
+    float y=0.0;
+    int num=0;
+    int row=-1;
+
+
+
+
+
+
   for (int i = 0; i < 36; i++)
   {
     poseMsg.pose.covariance[i] = 0;
@@ -467,23 +491,6 @@ int main(int argc, char **argv)
   state_out.data.resize(sizestate);
 
 
-  //initializa frame id
-  // imuMsg.header.frame_id  = "base_link";
-  //inertial nav estimation
-  // pose_navMsg.header.frame_id = "odom";
-  // pose_navMsg.child_frame_id  = "base_link";
-  //des nav visual
-  // desire_navMSG.header.frame_id = "base_link";
-  // desire_navMSG.child_frame_id  = "vel_desire";
-  //GPS pose in m or m/s and covaraince calculate from hacc vacc
-  // poseMsg.header.frame_id = "odom";  //recheck odom or world?
-  // poseVal.child_frame_id  = 'base_link'
-  //gpsraw to use natsatfix
-  // gpsrawMsg.header.frame_id  = "base_link";
-  // navvelMsg.header.frame_id  = "base_link";
-
-  // altMsg.header.frame_id = "odom";
-  // altMsg.child_frame_id  = "base_link";
 
   odom_pose_filtered.header.frame_id = "odom";
 
@@ -545,197 +552,6 @@ int main(int argc, char **argv)
 
       GPS_hAcc = (gpsrawMsg.position_covariance[0] > 0 ? gpsrawMsg.position_covariance[0]:999);
       GPS_velAcc = (gpsrawMsg.position_covariance[8] > 0 ? gpsrawMsg.position_covariance[8]:999);
-
-      tf::Quaternion q;
-      q[0] = imuMsg.orientation.w;
-      q[1] = imuMsg.orientation.x;
-      q[2] = imuMsg.orientation.y;
-      q[3] = imuMsg.orientation.z;
-      Acc_f[0] = imuMsg.linear_acceleration.x / 9.80655; 
-      Acc_f[1] = imuMsg.linear_acceleration.y / 9.80655;
-      Acc_f[2] = imuMsg.linear_acceleration.z / 9.80655; 
-      float q0q1 = q[0] * q[1];
-      float q0q2 = q[0] * q[2];
-      float q0q3 = q[0] * q[3];
-      float q1q1 = q[1] * q[1];
-      float q1q2 = q[1] * q[2];
-      float q1q3 = q[1] * q[3];
-      float q2q2 = q[2] * q[2];
-      float q2q3 = q[2] * q[3];
-      float q3q3 = q[3] * q[3];
-      R[0][0] = 2 * (0.5 - q2q2 - q3q3);
-      R[0][1] = 2 * (q1q2 - q0q3); 
-      R[0][2] = 2 * (q1q3 + q0q2);
-      R[1][0] = 2 * (q1q2 + q0q3);
-      R[1][1] = 2 * (0.5 - q1q1 - q3q3); 
-      R[1][2] = 2 * (q2q3 - q0q1);
-      R[2][0] = 2 * (q1q3 - q0q2); 
-      R[2][1] = 2 * (q2q3 + q0q1);
-      R[2][2] = 2 * (0.5 - q1q1 - q2q2); 
-      update(Acc_f, baro_maf); //update baro acc fusion
-      // printf("sudo alt = %.2f\n", estimated_altitude);
-
-
-/*
-
-
-
-        // Try to pop acc for compensate delay 0.25 ms
-      static uint16_t index = 0;
-      static bool index_full = false;
-      const int size_of_buffer = (delay_slam*160); //delay * navmsg_hz- > 18hz
-      static float acc_buffer[size_of_buffer][3];
-      static float q_buffer[size_of_buffer][4];
-      static float scale_filtered = 1.0;
-      //push
-      acc_buffer[index][0]=imuMsg.linear_acceleration.x;
-      acc_buffer[index][1]=imuMsg.linear_acceleration.y;
-      acc_buffer[index][2]=imuMsg.linear_acceleration.z;
-      q_buffer[index][0]=imuMsg.orientation.w;
-      q_buffer[index][1]=imuMsg.orientation.x;
-      q_buffer[index][2]=imuMsg.orientation.y;
-      q_buffer[index][3]=imuMsg.orientation.z;
-
-      //check if full then pop
-      if(index==size_of_buffer-1)
-        index_full=true;
-
-      //update index
-      index++;
-      index=(index)%size_of_buffer;
-
-
-
-      //try
-      // //state_out_pub.publish(//state_out);
-      tf::Quaternion q;
-      // if(index_full) {
-        
-      //   //inertial_nav param
-      //   q[0] = q_buffer[(index+1)%size_of_buffer][0];//imuMsg.orientation.w;
-      //   q[1] = q_buffer[(index+1)%size_of_buffer][1];//imuMsg.orientation.x;
-      //   q[2] = q_buffer[(index+1)%size_of_buffer][2];//imuMsg.orientation.y;
-      //   q[3] = q_buffer[(index+1)%size_of_buffer][3];//imuMsg.orientation.z;
-      //   Acc_f[0] = acc_buffer[(index+1)%size_of_buffer][0] / 9.80655;//imuMsg.linear_acceleration.x / 9.80655;
-      //   Acc_f[1] = acc_buffer[(index+1)%size_of_buffer][1] / 9.80655;//imuMsg.linear_acceleration.y / 9.80655;
-      //   Acc_f[2] = acc_buffer[(index+1)%size_of_buffer][2] / 9.80655;//imuMsg.linear_acceleration.z / 9.80655;
-      // }else{
-        q[0] = imuMsg.orientation.w;
-        q[1] = imuMsg.orientation.x;
-        q[2] = imuMsg.orientation.y;
-        q[3] = imuMsg.orientation.z;
-        Acc_f[0] = imuMsg.linear_acceleration.x / 9.80655; 
-        Acc_f[1] = imuMsg.linear_acceleration.y / 9.80655;
-        Acc_f[2] = imuMsg.linear_acceleration.z / 9.80655; 
-      // }
-      float q0q1 = q[0] * q[1];
-      float q0q2 = q[0] * q[2];
-      float q0q3 = q[0] * q[3];
-      float q1q1 = q[1] * q[1];
-      float q1q2 = q[1] * q[2];
-      float q1q3 = q[1] * q[3];
-      float q2q2 = q[2] * q[2];
-      float q2q3 = q[2] * q[3];
-      float q3q3 = q[3] * q[3];
-      R[0][0] = 2 * (0.5 - q2q2 - q3q3);
-      R[0][1] = 2 * (q1q2 - q0q3); 
-      R[0][2] = 2 * (q1q3 + q0q2);
-      R[1][0] = 2 * (q1q2 + q0q3);
-      R[1][1] = 2 * (0.5 - q1q1 - q3q3); 
-      R[1][2] = 2 * (q2q3 - q0q1);
-      R[2][0] = 2 * (q1q3 - q0q2); 
-      R[2][1] = 2 * (q2q3 + q0q1);
-      R[2][2] = 2 * (0.5 - q1q1 - q2q2); 
-
-
-      //inertial_nav param
-      gps_vel_ned_valid = true;
-        // ROS_INFO("pz:[%f]", data.pose.pose.position.z);
-      GPS_ALIVE = true;
-      _fix_ok = true;
-
-      //todo get rid of velocity weight 
-      //make function return and param inlet
-      // static float scale = 1.0;
-      tf::Vector3 vel_recover;
-      static tf::Vector3 last_slam = slam_before_scale;
-      tf::Vector3 diff_slam;
-
-      static bool reset;
-      static uint8_t count_reset = 0;
-      //check update for vision 
-      static ros::Time recent_vision_ts = odom_data.header.stamp;
-      ros::Duration slam_dt;
-      if(odom_data.header.stamp != recent_vision_ts) {
-        slam_dt = odom_data.header.stamp - recent_vision_ts;
-        recent_vision_ts = odom_data.header.stamp;
-        count_reset++;
-
-        diff_slam = (slam_before_scale - last_slam);
-        vel_recover = diff_slam/slam_dt.toSec();
-        last_slam = slam_before_scale;
-        // ROS_INFO_STREAM(vel_recover.x() << "\t" << vel_recover.y() << "\t" << vel_recover.z() << "\n");
-
-        if(count_reset >=2) {
-          reset = true;
-          count_reset=0;
-        }
-      }else{
-        reset = false;
-      }
-      hx = slam_before_scale.x()*scale_filtered;//poseMsg.pose.pose.position.x;
-      hy = slam_before_scale.y()*scale_filtered;//poseMsg.pose.pose.position.y;
-      GPS_vel_EAST = vel_recover.x()*100*scale_filtered;//navvelMsg.twist.linear.x*100;
-      GPS_vel_NORTH = vel_recover.y()*100*scale_filtered;//navvelMsg.twist.linear.y*100;
-      //Odom velocity for initial 
-
-
-      tf::Vector3 msf_acc_bias(state_out.data[b_ax], 
-                           state_out.data[b_ay], 
-                           state_out.data[b_az]);
-
-      // if(reset) {
-      //   float scale = pythagorus(x_est[0],y_est[0])/pythagorus(diff_slam.x(), diff_slam.y());
-      //   scale_filtered = 0.99*scale_filtered + 0.01*scale;
-      // }
-      
-      // printf("scale = %.3f\n", scale_filtered);
-      reset = false;
-      position_estimator(reset, msf_acc_bias, vel_recover);
-      scale_filtered = scale_filtered + 0.1*acc_bias[0] + 0.1*acc_bias[1];
-      printf("%.3f\t%.3f\t%.3f\n", acc_bias[0], acc_bias[1], scale_filtered);
-
-      tf::Vector3 pos_pred(x_est[0], y_est[0], z_est[0]);
-
-      
-      // //prepare to send out inertial data
-      inertial_gps.header.stamp = ros::Time::now();
-      inertial_gps.header.frame_id = "/odom";
-      inertial_gps.pose.pose.position.x = x_est[0];//+2*gps_inertial_offset.x();
-      inertial_gps.pose.pose.position.y = y_est[0];//+2*gps_inertial_offset.y();
-      //vel ? ? ?
-      inertial_gps.pose.pose.position.z =  z_est[0];
-      inertial_gps.pose.pose.orientation.x = imuMsg.orientation.x;
-      inertial_gps.pose.pose.orientation.y = imuMsg.orientation.y;
-      inertial_gps.pose.pose.orientation.z = imuMsg.orientation.z;
-      inertial_gps.pose.pose.orientation.w = imuMsg.orientation.w;
-
-      inertial_gps.pose.covariance[0]   = inertial_gps.pose.covariance[7] = GPS_hAcc;
-      inertial_gps.pose.covariance[14]  = 0.01; //z position
-      inertial_gps.pose.covariance[21] =  inertial_gps.pose.covariance[28] = inertial_gps.pose.covariance[35] = 0.001;
-      inertial_gps_pub.publish(inertial_gps);
-
-
-      inertial_gps_vel.header.stamp = ros::Time::now();
-      inertial_gps_vel.header.frame_id = "/odom";
-      inertial_gps_vel.twist.linear.x = diff_slam.x()*scale_filtered;
-      inertial_gps_vel.twist.linear.y = diff_slam.y()*scale_filtered;
-      inertial_gps_vel_pub.publish(inertial_gps_vel);
-
-
-
-
-*/
 
 
 
@@ -879,6 +695,97 @@ int main(int argc, char **argv)
     //   mag_pub.publish(magMsg);
     //   mag_ts = magMsg.header.stamp;
     // }
+
+
+
+
+
+
+
+
+
+
+
+
+    //UPDATE STATUS
+    static ros::Time depth_task_stamp = cur_time;
+
+    if(cur_time - depth_task_stamp > ros::Duration(0.033)) { //low priority task 0.5 hz 
+      depth_task_stamp = cur_time;
+      // This call waits until a new coherent set of frames is available on a device
+      // Calls to get_frame_data(...) and get_frame_timestamp(...) on a device will return stable values until wait_for_frames(...) is called
+      dev->wait_for_frames();
+
+      // Retrieve depth data, which was previously configured as a 640 x 480 image of 16-bit depth values
+      const uint16_t * depth_frame = reinterpret_cast<const uint16_t *>(dev->get_frame_data(rs::stream::depth));
+
+      // Print a simple text-based representation of the image, by breaking it into 10x20 pixel regions and and approximating the coverage of pixels within one meter
+      char buffer[(640/10+1)*(480/20)+1];
+      char * out = buffer;
+      int coverage[64] = {};
+      for(int y=0; y<480; ++y)
+      {
+          for(int x=0; x<640; ++x)
+          {
+              int depth = *depth_frame++;
+              if(depth > 0 && depth < one_meter) ++coverage[x/10];
+          }
+
+          if(y%20 == 19)
+          {
+              for(int & c : coverage)
+              {
+                  *out++ = " .:nhWWWW"[c/25]; //scale of depth (char)
+                  c = 0;
+              }
+              *out++ = '\n';
+          }
+      }
+      *out++ = 0;
+
+      x=0;
+      y=0;
+      num=0;
+      for(int i=0;i<(640/10+1)*(480/20)+1;i++)
+      {
+          if(i%(640/10+1)==0) row++;
+
+          if(buffer[i]=='W')
+              {
+                  x+=(i%(640/10+1));
+                  y+=row;
+                  num++;
+              }
+      }
+      if(num!=0)
+      {
+          x/=num;
+          y/=num;
+          row=-1;
+      }
+      x-=32;
+      y-=11;
+      // printf("\n%s", buffer);
+      printf("\nweight = %.2f\t%.2f\t%d", x,y,num);
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
