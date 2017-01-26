@@ -1,0 +1,50 @@
+<launch>
+
+    <param name="DELAY_NAV" value="0.29" />
+    <param name="HANDLE_OFF_SPD" value="0.05" /> <!-- 5% -->
+    <param name="HANDLE_OFF_RADIUS" value="0.15" />
+    <param name="GPS_SWITCH_RADIUS" value="0.5" />
+    <param name="VIS_SWITCH_RADIUS" value="0.5" />
+    <param name="VIS_SWITCH_ANGLE" value="0.1" />
+    <param name="GPS_HACC_CUTOFF" value="4.2" />
+    <param name="ALT_DIFF_SCALE" value="0.10" />
+
+    <!-- Visual artificial covariance -->
+    <param name="VIS_POSITION_NOISE" value="0.05" /> <!--0.000257 0.001 or 0.01 -->
+    <param name="VIS_ORIENTATION_NOISE" value="0.1" /> <!-- don't use yet : we use pos/2 = noise orient-->
+    <param name="VIS_SCALE_ACCEPTION" value="0.05" />  <!-- calibration will discard if avg scale below this value -->
+
+
+    <!-- GPS analysis param -->
+    <param name="TAU_GRAD_GPS" value="0.22" /> <!-- low-pass filter gradient gps -->
+    <param name="MARGIN" value="2" /> <!-- gps increment score -->
+    <param name="LOWER_LIMIT" value="-5" /> <!-- min score(good) -->
+    <param name="UPPER_LIMIT" value="5" /> <!-- max score(bad) -->
+    <param name="MAX_HACC_ALLOW" value="4.0"/> <!-- higher than this value is alway bad -->
+    <param name="MIN_HACC_ALLOW" value="2.8" /> <!-- lower than this value is alway good -->
+
+
+
+
+
+    <node name="thirdorder" pkg="crossover_nav" type="thirdorder" output="screen">
+
+    </node>
+
+
+
+    <node pkg="tf" type="static_transform_publisher" name="link1_broadcaster2" args="0.0 0.0 0.0 0.0 0.0 0.0 world odom 100" />
+    <node pkg="tf" type="static_transform_publisher" name="link1_broadcaster4" args="0.0 0.0 0.0 0.0 0.0 0.0 odom fcu 100" />
+
+    <node pkg="tf" type="static_transform_publisher" name="link1_broadcaste3" args="0.0 0.0 0.0 0.0 0.0 0.0 odom base_link 100" />
+
+
+    <node name="gps_pose_vel_to_odom"  pkg="crossover_nav" type="odometry_pose.py" args="50 odom fcu"  output="screen" >
+       <remap from="/sub_pose" to="/imu_max/pose" />
+       <remap from="/sub_twist" to="/imu_max/Navvel" />
+       <remap from="/pub_odo" to="/imu_max/poseodo" />
+   </node>
+
+
+
+</launch>

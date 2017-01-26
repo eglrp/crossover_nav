@@ -1,0 +1,140 @@
+<launch>
+
+    <param name="DELAY_NAV" value="0.29" />
+    <param name="HANDLE_OFF_SPD" value="0.05" /> <!-- 5% -->
+    <param name="HANDLE_OFF_RADIUS" value="0.5" />
+    <param name="GPS_SWITCH_RADIUS" value="0.5" />
+    <param name="VIS_SWITCH_RADIUS" value="1.0" />
+    <param name="VIS_SWITCH_ANGLE" value="0.1" />
+    <param name="GPS_HACC_CUTOFF" value="4.2" />
+    <param name="ALT_DIFF_SCALE" value="0.10" />
+    <param name="NUM_SAMPLE_PRESCALE" value="6" />
+    <param name="TIMEOUT_CONV" value="5.0" /> <!-- not supported yet -->
+
+    <!-- Visual artificial covariance -->
+    <param name="VIS_POSITION_NOISE" value="0.05" /> <!--0.000257 0.001 or 0.01 -->
+    <param name="VIS_ORIENTATION_NOISE" value="0.1" /> <!-- don't use yet : we use pos/2 = noise orient-->
+    <param name="VIS_SCALE_ACCEPTION" value="0.05" />  <!-- calibration will discard if avg scale below this value -->
+
+
+    <!-- GPS analysis param -->
+    <param name="TAU_GRAD_GPS" value="0.22" /> <!-- low-pass filter gradient gps -->
+    <param name="MARGIN" value="2" /> <!-- gps increment score -->
+    <param name="LOWER_LIMIT" value="-10" /> <!-- min score(good) -->
+    <param name="UPPER_LIMIT" value="5" /> <!-- max score(bad) -->
+    <param name="MAX_HACC_ALLOW" value="4.2"/> <!-- higher than this value is alway bad -->
+    <param name="MIN_HACC_ALLOW" value="2.8" /> <!-- lower than this value is alway good -->
+
+    <!-- Other thing -->
+    <!-- <param name="CAMERA_PITCH" value="0.42" /> -->
+    <param name="HOME_OFF_x" value="-5.0" />
+    <param name="HOME_OFF_y" value="0.0" />
+    <param name="HOME_AT_ARM" value="true" />
+    <param name="HOME_LAT_NO_GPS" value="7.0064177" />
+    <param name="HOME_LNG_NO_GPS" value="100.5025051" />
+
+    <node name="crossover" pkg="crossover_nav" type="crossover" output="screen" respawn="true" >
+
+    </node>
+
+
+
+
+
+<!--_________________________________________________MSF_______________________________________________________________-->
+
+
+<!-- MAKE INIT HEADING FROM IMU --><!-- 
+     <node name="posetwist_to_odom"  pkg="crossover_nav" type="imu_to_orientation.py" args="10 odom base_link"  >
+        <remap from="/sub_imu" to="/mavros/imu/data" />
+        <remap from="/pub_orientation" to="/posetwist_to_odom/orient" />
+    </node> -->
+
+    <!-- MSF PART GPS + VISUAL -->
+    <node name="msf_distort" pkg="msf_distort" type="msf_distort" clear_params="true" output="screen" respawn="true" >
+        <!--GPS--> 
+        <!-- <remap from="msf_distort/navsatfix_input" to="/mavros/global_position/global" />   -->          
+        <!--GPS filtered--> 
+        <!-- <remap from="msf_distort/posegps_input" to="/imu_max/Inertial_nav"/> -->  
+        <!--GPS raw--> 
+        <remap from="msf_distort/posegps_input" to="/imu_max/pose"/>  
+        <!--PTAM--> 
+        <remap from="msf_distort/pose_with_covariance_input" to="/imu_max/odom_pose_filtered" />  
+
+    </node>
+    <!-- IMU TO HEADING POSE MSG-->
+<!--     <node name="imu_to_orintation_pose"  pkg="crossover_nav" type="imu_orientation_to_pose.py" args="10 odom base_link"  >
+        <remap from="/sub_imu" to="/mavros/imu/data" />
+        <remap from="/pub_pose" to="/imu_to_pose/pose_orient" />
+    </node> -->
+
+<!-- CAUTION !! please take 10 sec before init this.. to make sure tz working ok -->
+    <node name="pose_from_compass_position_gps" pkg="msf_updates" type="position_pose_pressure_sensor" clear_params="true" output="screen" respawn="true" >
+
+
+        <!--IMU core sensor-->
+        <remap from="msf_core/imu_state_input" to="/mavros/imu/data" /> 
+        
+        <!--DISTORTED GPS-inertial senbsor-->
+        <!-- <remap from="msf_updates/pose_gps_input" to="/imu_max/Inertial_nav" />  -->
+        <!-- <remap from="msf_updates/pose_gps_input" to="msf_distort/pose_with_covariance_gps_output" />  -->
+        <!-- Inertial nav test and cut -->
+        <remap from="msf_updates/pose_gps_input" to="/imu_max/pose" />  
+        <!-- raw gps test no cut --> 
+        <!-- plz edit .yaml to fix with covariance and delay -->
+        <remap from="msf_updates/gpsvel_input"  to="/mavros/global_position/raw/gps_vel" />
+        <!-- <remap from="msf_updates/gpsvel_input"  to="/imu_max/Inertial_nav_vel" /> -->
+
+        <!--DISTORTED Pose senbsor-->
+        <remap from="msf_updates/pose_sensor_pose_with_covariance_input" to="/msf_distort/pose_with_covariance_output" />
+
+        <!-- Pressure sensor -->
+        <!-- <remap from="msf_updates/pressure_height" to="/imu_max/baro_alt" /> -->
+        <remap from="msf_updates/pressure_height" to="/mavros/imu/atm_pressure" /> <!-- fastest directly achieve baro but care about home -->
+        <!-- <remap from="msf_updates/processed_alt" to="/mavros/altitude" /> --> <!--this will follow terrian lead to bad calibrate scale z of vision-->
+
+
+        <remap from="msf_updates/imu_input" to="/mavros/imu/data" />
+        <!-- Optical flow position test -->
+        <remap from="msf_updates/flow_input" to="/mavros/px4flow/raw/optical_flow_rad" />
+  
+        <!-- <remap from="msf_updates/mag_input" to="/mavros/imu/mag" /> -->
+
+        <remap from="msf_updates/agl_input" to="/mavros/px4flow/ground_distance" />
+
+        <rosparam file="$(find msf_updates)/slam_gps_pressure.yaml"/>
+
+	<remap from="/msf_core/pose" to="/mavros/vision_pose/pose_cov" />
+    </node>
+
+
+
+
+
+
+<!-- MAKE INIT HEADING FROM IMU -->
+
+<!--     <node name="otop"  pkg="crossover_nav" type="pose_odometry.py" args="50 odom ukf"  output="screen" >
+       <remap from="/sub_odo" to="/odometry/filtered" />
+       <remap from="/pub_pose" to="/odometry/filtered_pose" />
+   </node> -->
+    <node name="Inertial_odom"  pkg="crossover_nav" type="odometry_pose.py" args="50 odom base_link"  output="screen" >
+       <remap from="/sub_pose" to="/imu_max/Inertial_nav" />
+<!--        <remap from="/sub_twist" to="/imu_max/Navvel" />
+ -->       <remap from="/pub_odo" to="/imu_max/Inertial_nav_odom" />
+   </node>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</launch>

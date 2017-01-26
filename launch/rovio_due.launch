@@ -1,0 +1,58 @@
+<launch>
+
+
+
+
+<node name="camera" pkg="usb_cam" type="usb_cam_node">
+        <param name="video_device" value="/dev/video1" />
+        <param name="image_width" value="640" />
+        <param name="image_height" value="480" />
+        <param name="pixel_format" value="mjpeg" />
+        <param name="framerate" value="30" />
+        <param name="camera_frame_id" value="webcam" />
+
+<!--         <param name="pixel_format" value="yuyv" /> -->
+        <!-- <param name="io_method" value="mmap"/> -->
+        <!-- <param name="camera_info_url" type="string" value="file:///home/fx/Dropbox/catkin_ws/cam_info/sj5000.yaml" /> -->
+
+    </node>
+  <node name="proc" ns="camera" pkg="image_proc" type="image_proc" args="">
+  </node>
+
+
+
+  <node pkg="rovio" type="rovio_node" name="rovio" output="screen">
+  <param name="filter_config" value="$(find rovio)/cfg/rovio_due.info"/>
+  <param name="camera0_config" value="$(find rovio)/cfg/black_4000_new.yaml"/>
+  <remap from="/imu0" to="/imu_max" />
+  <remap from="/cam0/image_raw" to="/camera/image_mono"/>
+  </node>
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find crossover_nav)/launch/rovio_pcl.rviz" />
+
+    <node name="pose_from_compass_position_gps" pkg="msf_updates" type="position_pose_pressure_sensor" clear_params="true" output="screen">
+
+
+        <!--IMU core sensor-->
+        <remap from="msf_core/imu_state_input" to="/imu_max" /> 
+        
+        <!--DISTORTED GPS-inertial senbsor-->
+        <!-- <remap from="msf_updates/pose_gps_input" to="/imu_max/Inertial_nav" />  -->
+        <!-- <remap from="msf_updates/pose_gps_input" to="msf_distort/pose_with_covariance_gps_output" />  -->
+        <!-- Inertial nav test and cut -->
+        <!-- <remap from="msf_updates/pose_sensor_pose_with_covariance_input" to="/msf_distort/pose_with_covariance_output" /> -->
+
+        <rosparam file="$(find msf_updates)/slam_gps_pressure.yaml"/>
+    </node>
+
+
+    <node name="otop"  pkg="crossover_nav" type="pose_odometry.py" args="50 odom ukf"  output="screen" >
+       <remap from="/sub_odo" to="/rovio/odometry" />
+       <remap from="/pub_pose" to="/msf_updates/pose_sensor_pose_with_covariance_input" />
+   </node>
+
+
+   <node name="oct" pkg="octomap_world" type="octomap_manager">
+      <param name="tf_frame" value="map" />
+      <remap from="/pointcloud" to="/rovio/pcl" />
+    </node>
+</launch>

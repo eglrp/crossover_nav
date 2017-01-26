@@ -1,0 +1,28 @@
+<launch>
+
+
+
+
+
+  <node name="proc" ns="camera" pkg="image_proc" type="image_proc" args="">
+  </node>
+
+
+
+  <node pkg="rovio" type="rovio_node" name="rovio" output="screen">
+  <param name="filter_config" value="$(find rovio)/cfg/rovio_px4.info"/>
+  <param name="camera0_config" value="$(find rovio)/cfg/black_4000_new.yaml"/>
+  <remap from="/imu0" to="/mavros/imu/data" />
+  <remap from="/cam0/image_raw" to="/camera/image_mono"/>
+  <remap from="/odometry" to="/mavros/local_position/odom" />
+  </node>
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find crossover_nav)/launch/rovio_pcl.rviz" />
+
+
+
+
+
+
+
+
+</launch>

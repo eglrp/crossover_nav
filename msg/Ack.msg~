@@ -1,0 +1,12 @@
+Header header
+
+bool ACK_PENDING
+bool ACK_GCONFIG
+bool ACK_PID_RPY1
+bool ACK_PID_RPY2
+bool ACK_PID_ALT
+bool ACK_PID_NAV
+bool ACK_SPD
+bool ACK_NAV_INER
+bool ACK_MODE
+bool ACK_SETHOME
