@@ -75,7 +75,7 @@ position_pose_pressure_sensor/pose_fixed_p_wv: false
 position_pose_pressure_sensor/pose_fixed_q_wv: true
 position_pose_pressure_sensor/pose_delay: 0.07
 
-position_pose_pressure_sensor/position_delay: 0.23 #0.29 #0.01 #set minimum to Inertial nav output / set 0.29 to raw gps
+position_pose_pressure_sensor/position_delay: 0.15 #0.29 #0.01 #set minimum to Inertial nav output / set 0.29 to raw gps
 position_pose_pressure_sensor/position_noise_meas: 2.0  #set minimum to Inertial nav output / set 2.0 to raw gps
 position_pose_pressure_sensor/position_use_fixed_covariance: false #set fix if using Inertial nav output / set no fix (false) to raw gps
 position_sensor/position_use_fixed_covariance: false #set fix if using Inertial nav output / set no fix (false) to raw gps
