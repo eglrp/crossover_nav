@@ -1894,7 +1894,7 @@ inline void FIND_OBSTACLE()
                               y_conv,
                               0);
       // Uncommend this line below to visualize from terminal
-      printf("\n%s", buffer);
+      // printf("\n%s", buffer);
       
       // convert this to earth frame
 
@@ -1904,5 +1904,5 @@ inline void FIND_OBSTACLE()
                              0);
       v_avoid = (Qwi_*vel_b_q*Qwi_.inverse()).getAxis();
 
-      printf("avoid = %.2f\t%.2f\n", v_avoid.x(),v_avoid.y()/**(((float)num_grid)/400)*/);
+      printf("avoid = %.2f\t%.2f\n", vel_b_avoid.x(),vel_b_avoid.y()/**(((float)num_grid)/400)*/);
 }
