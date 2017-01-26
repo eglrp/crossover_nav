@@ -559,12 +559,8 @@ int main(int argc, char **argv)
       inertial_gps.header.frame_id = "/odom";
       inertial_gps.pose.pose.position.x = 0;//x_est[0];//+2*gps_inertial_offset.x();
       inertial_gps.pose.pose.position.y = 0;//y_est[0];//+2*gps_inertial_offset.y();
-      //vel ? ? ?
       inertial_gps.pose.pose.position.z =  estimated_altitude;
-      inertial_gps.pose.pose.orientation.x = imuMsg.orientation.x;
-      inertial_gps.pose.pose.orientation.y = imuMsg.orientation.y;
-      inertial_gps.pose.pose.orientation.z = imuMsg.orientation.z;
-      inertial_gps.pose.pose.orientation.w = imuMsg.orientation.w;
+      inertial_gps.pose.pose.orientation = imuMsg.orientation;
 
       inertial_gps.pose.covariance[0]   = inertial_gps.pose.covariance[7] = GPS_hAcc;
       inertial_gps.pose.covariance[14]  = 0.01; //z position
