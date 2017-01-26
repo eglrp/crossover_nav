@@ -1288,7 +1288,7 @@ inline void Init_filter() {
 
       srv_req.config = conf;
 
-      ros::service::call("/pose_from_compass_position_gps/position_pose_pressure_sensor/set_parameters", srv_req, srv_resp);
+      ros::service::call("/MSF/position_pose_pressure_sensor/set_parameters", srv_req, srv_resp);
 }
 
 
@@ -1894,7 +1894,7 @@ inline void FIND_OBSTACLE()
                               y_conv,
                               0);
       // Uncommend this line below to visualize from terminal
-      // printf("\n%s", buffer);
+      //printf("\n%s", buffer);
       
       // convert this to earth frame
 

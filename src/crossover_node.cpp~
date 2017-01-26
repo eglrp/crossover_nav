@@ -40,6 +40,10 @@
 #include <termios.h>
 
 
+// First include the librealsense C++ header file
+#include <librealsense/rs.hpp>
+
+
 //function convert arduino to ros
 //------------ROS version-------
 // #include <iostream>
@@ -72,7 +76,7 @@ float GPS_velAcc = 10;
 float GPS_vel_EAST = 0;
 float GPS_vel_NORTH = 0;
 
-
+tf::Quaternion Qwi_;
 
 float R[3][3] = {{1, 0, 0},
 {0, 1, 0},
@@ -85,7 +89,7 @@ bool GPS_ALIVE = false;
 bool _fix_ok = false;
 bool gps_vel_ned_valid = false;
 
-const float delay_slam  = 0.14;
+const float delay_slam  = 0.05;
 
 float         vision_x[2], vision_y[2], vision_z[2];
 float         vision_bx[2], vision_by[2], vision_bz[2];
@@ -217,6 +221,7 @@ double MIN_HACC_ALLOW;
 double CAMERA_PITCH;
 double HOME_OFF_x;
 double HOME_OFF_y;
+bool REALSENSE_ENABLE=false;
 
 
 enum {
@@ -307,31 +312,47 @@ ros::Publisher Nav ;//e<be
 ros::Publisher alt ;//e<na
 ros::Publisher des_nav ;//
 ros::Publisher mag_pub ;//
-ros::Publisher  inertial_gps_pub ;// 
-ros::Publisher  inertial_gps_vel_pub;
-ros::Publisher  baro_alt_abs_pub ;// 
-ros::Publisher  status_pub ;// n.adve
+ros::Publisher inertial_gps_pub ;// 
+ros::Publisher inertial_gps_vel_pub;
+ros::Publisher baro_alt_abs_pub ;// 
+ros::Publisher status_pub ;// n.adve
 ros::Publisher odom_pub ;// n.adverti
-ros::Publisher  state_fix_pub ;// n.a
+ros::Publisher state_fix_pub ;// n.a
 ros::Publisher state_out_pub ;// n.ad
-ros::Publisher  msf_error_pub ;// n.a
-ros::Publisher  ukf_error_pub ;// n.a
-ros::Publisher  inav_error_pub ;// n.
-ros::Publisher  vis_status_pub ;// n.
+ros::Publisher msf_error_pub ;// n.a
+ros::Publisher ukf_error_pub ;// n.a
+ros::Publisher inav_error_pub ;// n.
+ros::Publisher vis_status_pub ;// n.
 ros::Publisher slam_reset_pub ;// n.a
+ros::Publisher local_pos_pub;
 
-// struct hz_filtered {
-//   static float last_time;
-//   static float hz;
-//   void  setHz(float hz_) {
-//     hz = hz_;
-//   }
-//   float output(float time) {
-//     hz = 0.01*(1/(time - last_time)) + 0.99*hz;
-//     last_time = time;
-//     return hz;
-//   }
-// }
+
+
+/////////////////////////////////////
+///////////OFFBOARD EIGHT PATH///////
+bool RESET_POSE_INIT_REQUEST = true;
+void DRIVE_PATH(bool READY );
+enum {
+  DRIVE_EIGHT_EQUATION=0
+};
+/////////////////////////////////////
+// Create a context object. This object owns the handles to all connected realsense devices.
+rs::context ctx;
+rs::device * dev = ctx.get_device(0);
+// Determine depth value corresponding to one meter
+const uint16_t one_meter = static_cast<uint16_t>(3.0f / dev->get_depth_scale());  
+float x_av=0.0;
+float y_av=0.0;
+int num_grid=0;
+int row_grid=-1;
+bool OBV_IS_ENABLED = false;
+bool OBV_IS_READY = false;
+inline bool IS_AGL_NOT_TOO_LOW() {
+  return (state_out.data[pz]-state_out.data[tz] > 0.5 ? true:false);
+}
+inline void FIND_OBSTACLE();
+tf::Vector3 v_avoid;
+
 
 int main(int argc, char **argv)
 {
@@ -373,6 +394,8 @@ int main(int argc, char **argv)
   n.param("HOME_OFF_y", HOME_OFF_y, 0.0);
   n.param("HOME_LAT_NO_GPS", GPS_HOME.lat, 7.0064177);
   n.param("HOME_LNG_NO_GPS", GPS_HOME.lng, 100.5025051);
+
+  n.param("REALSENSE_ENABLE", REALSENSE_ENABLE, false);
   // n.param("DEBUG_CONTROL_OUT" , DEBUG_CONTROL_OUT, false);
   // n.param("DEBUG_PPID_OUT"    , DEBUG_PPID_OUT, false);
   // n.param("DEBUG_PPID2_OUT"   , DEBUG_PPID2_OUT, false);
@@ -424,6 +447,9 @@ int main(int argc, char **argv)
   //state out pub
   //state_out_pub = n.advertise<sensor_fusion_comm::ExtEkf>("/state_out2",10);
 
+   local_pos_pub = n.advertise<geometry_msgs::PoseStamped>
+    ("mavros/setpoint_position/local", 10);
+
   //  msf_error_pub = n.advertise<nav_msgs::Odometry>("/error_odom/msf", 10);
   //  ukf_error_pub = n.advertise<nav_msgs::Odometry>("/error_odom/ukf", 10);
   //  inav_error_pub = n.advertise<nav_msgs::Odometry>("/error_odom/inav", 10);
@@ -448,16 +474,36 @@ int main(int argc, char **argv)
   // ros::Subscriber ukf_sub = n.subscribe<nav_msgs::Odometry>("/odometry/filtered", 10, ukf_callback);
 
 
-  //initialize imu covariance
-  // for (int i = 0; i < 9; i++)
-  // {
-  //   imuMsg.orientation_covariance[i] = 0;
-  //   imuMsg.angular_velocity_covariance[i] = 0;
-  //   imuMsg.linear_acceleration_covariance[i] = 0;
-  //   gpsrawMsg.position_covariance[i] = 0;
-  //   altMsg.pose.covariance[i] = 0;
-  // }
-  // memset(&altMsg.pose.covariance,0,sizeof(altMsg.pose.covariance));
+
+
+    if(REALSENSE_ENABLE)
+    {
+      printf("There are %d connected RealSense devices.\n", ctx.get_device_count());
+      if(ctx.get_device_count() == 0) 
+      {
+        printf("There is no realsense connected\nObstacle avoidance disabled");
+        OBV_IS_ENABLED = false;
+        OBV_IS_READY = false;
+      }else
+      {
+        OBV_IS_ENABLED = true;
+        // OBV_IS_READY = true;
+      }     
+      // This tutorial will access only a single device, but it is trivial to extend to multiple devices
+      printf("\nUsing device 0, an %s\n", dev->get_name());
+      printf("    Serial number: %s\n", dev->get_serial());
+      printf("    Firmware version: %s\n", dev->get_firmware_version());
+      // Configure depth to run at VGA resolution at 30 frames per second
+      dev->enable_stream(rs::stream::depth, 640, 480, rs::format::z16, 30);
+      dev->start();
+    }
+    
+
+  
+
+
+
+
   for (int i = 0; i < 36; i++)
   {
     poseMsg.pose.covariance[i] = 0;
@@ -465,23 +511,6 @@ int main(int argc, char **argv)
   state_out.data.resize(sizestate);
 
 
-  //initializa frame id
-  // imuMsg.header.frame_id  = "base_link";
-  //inertial nav estimation
-  // pose_navMsg.header.frame_id = "odom";
-  // pose_navMsg.child_frame_id  = "base_link";
-  //des nav visual
-  // desire_navMSG.header.frame_id = "base_link";
-  // desire_navMSG.child_frame_id  = "vel_desire";
-  //GPS pose in m or m/s and covaraince calculate from hacc vacc
-  // poseMsg.header.frame_id = "odom";  //recheck odom or world?
-  // poseVal.child_frame_id  = 'base_link'
-  //gpsraw to use natsatfix
-  // gpsrawMsg.header.frame_id  = "base_link";
-  // navvelMsg.header.frame_id  = "base_link";
-
-  // altMsg.header.frame_id = "odom";
-  // altMsg.child_frame_id  = "base_link";
 
   odom_pose_filtered.header.frame_id = "odom";
 
@@ -544,209 +573,14 @@ int main(int argc, char **argv)
       GPS_hAcc = (gpsrawMsg.position_covariance[0] > 0 ? gpsrawMsg.position_covariance[0]:999);
       GPS_velAcc = (gpsrawMsg.position_covariance[8] > 0 ? gpsrawMsg.position_covariance[8]:999);
 
-      tf::Quaternion q;
-      q[0] = imuMsg.orientation.w;
-      q[1] = imuMsg.orientation.x;
-      q[2] = imuMsg.orientation.y;
-      q[3] = imuMsg.orientation.z;
-      Acc_f[0] = imuMsg.linear_acceleration.x / 9.80655; 
-      Acc_f[1] = imuMsg.linear_acceleration.y / 9.80655;
-      Acc_f[2] = imuMsg.linear_acceleration.z / 9.80655; 
-      float q0q1 = q[0] * q[1];
-      float q0q2 = q[0] * q[2];
-      float q0q3 = q[0] * q[3];
-      float q1q1 = q[1] * q[1];
-      float q1q2 = q[1] * q[2];
-      float q1q3 = q[1] * q[3];
-      float q2q2 = q[2] * q[2];
-      float q2q3 = q[2] * q[3];
-      float q3q3 = q[3] * q[3];
-      R[0][0] = 2 * (0.5 - q2q2 - q3q3);
-      R[0][1] = 2 * (q1q2 - q0q3); 
-      R[0][2] = 2 * (q1q3 + q0q2);
-      R[1][0] = 2 * (q1q2 + q0q3);
-      R[1][1] = 2 * (0.5 - q1q1 - q3q3); 
-      R[1][2] = 2 * (q2q3 - q0q1);
-      R[2][0] = 2 * (q1q3 - q0q2); 
-      R[2][1] = 2 * (q2q3 + q0q1);
-      R[2][2] = 2 * (0.5 - q1q1 - q2q2); 
-      update(Acc_f, baro_maf); //update baro acc fusion
-      // printf("sudo alt = %.2f\n", estimated_altitude);
-
-
-/*
-
-
-
-        // Try to pop acc for compensate delay 0.25 ms
-      static uint16_t index = 0;
-      static bool index_full = false;
-      const int size_of_buffer = (delay_slam*160); //delay * navmsg_hz- > 18hz
-      static float acc_buffer[size_of_buffer][3];
-      static float q_buffer[size_of_buffer][4];
-      static float scale_filtered = 1.0;
-      //push
-      acc_buffer[index][0]=imuMsg.linear_acceleration.x;
-      acc_buffer[index][1]=imuMsg.linear_acceleration.y;
-      acc_buffer[index][2]=imuMsg.linear_acceleration.z;
-      q_buffer[index][0]=imuMsg.orientation.w;
-      q_buffer[index][1]=imuMsg.orientation.x;
-      q_buffer[index][2]=imuMsg.orientation.y;
-      q_buffer[index][3]=imuMsg.orientation.z;
-
-      //check if full then pop
-      if(index==size_of_buffer-1)
-        index_full=true;
-
-      //update index
-      index++;
-      index=(index)%size_of_buffer;
-
-
-
-      //try
-      // //state_out_pub.publish(//state_out);
-      tf::Quaternion q;
-      // if(index_full) {
-        
-      //   //inertial_nav param
-      //   q[0] = q_buffer[(index+1)%size_of_buffer][0];//imuMsg.orientation.w;
-      //   q[1] = q_buffer[(index+1)%size_of_buffer][1];//imuMsg.orientation.x;
-      //   q[2] = q_buffer[(index+1)%size_of_buffer][2];//imuMsg.orientation.y;
-      //   q[3] = q_buffer[(index+1)%size_of_buffer][3];//imuMsg.orientation.z;
-      //   Acc_f[0] = acc_buffer[(index+1)%size_of_buffer][0] / 9.80655;//imuMsg.linear_acceleration.x / 9.80655;
-      //   Acc_f[1] = acc_buffer[(index+1)%size_of_buffer][1] / 9.80655;//imuMsg.linear_acceleration.y / 9.80655;
-      //   Acc_f[2] = acc_buffer[(index+1)%size_of_buffer][2] / 9.80655;//imuMsg.linear_acceleration.z / 9.80655;
-      // }else{
-        q[0] = imuMsg.orientation.w;
-        q[1] = imuMsg.orientation.x;
-        q[2] = imuMsg.orientation.y;
-        q[3] = imuMsg.orientation.z;
-        Acc_f[0] = imuMsg.linear_acceleration.x / 9.80655; 
-        Acc_f[1] = imuMsg.linear_acceleration.y / 9.80655;
-        Acc_f[2] = imuMsg.linear_acceleration.z / 9.80655; 
-      // }
-      float q0q1 = q[0] * q[1];
-      float q0q2 = q[0] * q[2];
-      float q0q3 = q[0] * q[3];
-      float q1q1 = q[1] * q[1];
-      float q1q2 = q[1] * q[2];
-      float q1q3 = q[1] * q[3];
-      float q2q2 = q[2] * q[2];
-      float q2q3 = q[2] * q[3];
-      float q3q3 = q[3] * q[3];
-      R[0][0] = 2 * (0.5 - q2q2 - q3q3);
-      R[0][1] = 2 * (q1q2 - q0q3); 
-      R[0][2] = 2 * (q1q3 + q0q2);
-      R[1][0] = 2 * (q1q2 + q0q3);
-      R[1][1] = 2 * (0.5 - q1q1 - q3q3); 
-      R[1][2] = 2 * (q2q3 - q0q1);
-      R[2][0] = 2 * (q1q3 - q0q2); 
-      R[2][1] = 2 * (q2q3 + q0q1);
-      R[2][2] = 2 * (0.5 - q1q1 - q2q2); 
-
-
-      //inertial_nav param
-      gps_vel_ned_valid = true;
-        // ROS_INFO("pz:[%f]", data.pose.pose.position.z);
-      GPS_ALIVE = true;
-      _fix_ok = true;
-
-      //todo get rid of velocity weight 
-      //make function return and param inlet
-      // static float scale = 1.0;
-      tf::Vector3 vel_recover;
-      static tf::Vector3 last_slam = slam_before_scale;
-      tf::Vector3 diff_slam;
-
-      static bool reset;
-      static uint8_t count_reset = 0;
-      //check update for vision 
-      static ros::Time recent_vision_ts = odom_data.header.stamp;
-      ros::Duration slam_dt;
-      if(odom_data.header.stamp != recent_vision_ts) {
-        slam_dt = odom_data.header.stamp - recent_vision_ts;
-        recent_vision_ts = odom_data.header.stamp;
-        count_reset++;
-
-        diff_slam = (slam_before_scale - last_slam);
-        vel_recover = diff_slam/slam_dt.toSec();
-        last_slam = slam_before_scale;
-        // ROS_INFO_STREAM(vel_recover.x() << "\t" << vel_recover.y() << "\t" << vel_recover.z() << "\n");
-
-        if(count_reset >=2) {
-          reset = true;
-          count_reset=0;
-        }
-      }else{
-        reset = false;
-      }
-      hx = slam_before_scale.x()*scale_filtered;//poseMsg.pose.pose.position.x;
-      hy = slam_before_scale.y()*scale_filtered;//poseMsg.pose.pose.position.y;
-      GPS_vel_EAST = vel_recover.x()*100*scale_filtered;//navvelMsg.twist.linear.x*100;
-      GPS_vel_NORTH = vel_recover.y()*100*scale_filtered;//navvelMsg.twist.linear.y*100;
-      //Odom velocity for initial 
-
-
-      tf::Vector3 msf_acc_bias(state_out.data[b_ax], 
-                           state_out.data[b_ay], 
-                           state_out.data[b_az]);
-
-      // if(reset) {
-      //   float scale = pythagorus(x_est[0],y_est[0])/pythagorus(diff_slam.x(), diff_slam.y());
-      //   scale_filtered = 0.99*scale_filtered + 0.01*scale;
-      // }
-      
-      // printf("scale = %.3f\n", scale_filtered);
-      reset = false;
-      position_estimator(reset, msf_acc_bias, vel_recover);
-      scale_filtered = scale_filtered + 0.1*acc_bias[0] + 0.1*acc_bias[1];
-      printf("%.3f\t%.3f\t%.3f\n", acc_bias[0], acc_bias[1], scale_filtered);
-
-      tf::Vector3 pos_pred(x_est[0], y_est[0], z_est[0]);
-
-      
-      // //prepare to send out inertial data
-      inertial_gps.header.stamp = ros::Time::now();
-      inertial_gps.header.frame_id = "/odom";
-      inertial_gps.pose.pose.position.x = x_est[0];//+2*gps_inertial_offset.x();
-      inertial_gps.pose.pose.position.y = y_est[0];//+2*gps_inertial_offset.y();
-      //vel ? ? ?
-      inertial_gps.pose.pose.position.z =  z_est[0];
-      inertial_gps.pose.pose.orientation.x = imuMsg.orientation.x;
-      inertial_gps.pose.pose.orientation.y = imuMsg.orientation.y;
-      inertial_gps.pose.pose.orientation.z = imuMsg.orientation.z;
-      inertial_gps.pose.pose.orientation.w = imuMsg.orientation.w;
-
-      inertial_gps.pose.covariance[0]   = inertial_gps.pose.covariance[7] = GPS_hAcc;
-      inertial_gps.pose.covariance[14]  = 0.01; //z position
-      inertial_gps.pose.covariance[21] =  inertial_gps.pose.covariance[28] = inertial_gps.pose.covariance[35] = 0.001;
-      inertial_gps_pub.publish(inertial_gps);
-
-
-      inertial_gps_vel.header.stamp = ros::Time::now();
-      inertial_gps_vel.header.frame_id = "/odom";
-      inertial_gps_vel.twist.linear.x = diff_slam.x()*scale_filtered;
-      inertial_gps_vel.twist.linear.y = diff_slam.y()*scale_filtered;
-      inertial_gps_vel_pub.publish(inertial_gps_vel);
-
-
-
-
-*/
-
 
 
       inertial_gps.header.stamp = imuMsg.header.stamp;
       inertial_gps.header.frame_id = "/odom";
       inertial_gps.pose.pose.position.x = 0;//x_est[0];//+2*gps_inertial_offset.x();
       inertial_gps.pose.pose.position.y = 0;//y_est[0];//+2*gps_inertial_offset.y();
-      //vel ? ? ?
       inertial_gps.pose.pose.position.z =  estimated_altitude;
-      inertial_gps.pose.pose.orientation.x = imuMsg.orientation.x;
-      inertial_gps.pose.pose.orientation.y = imuMsg.orientation.y;
-      inertial_gps.pose.pose.orientation.z = imuMsg.orientation.z;
-      inertial_gps.pose.pose.orientation.w = imuMsg.orientation.w;
+      inertial_gps.pose.pose.orientation = imuMsg.orientation;
 
       inertial_gps.pose.covariance[0]   = inertial_gps.pose.covariance[7] = GPS_hAcc;
       inertial_gps.pose.covariance[14]  = 0.01; //z position
@@ -775,42 +609,6 @@ int main(int argc, char **argv)
       }
       pose.publish(poseAndOffsetMsg);
       pose_ts = poseMsg.header.stamp;
-
-      
-      // //for keep error data only
-      // msf_errorMsg.header = ukf_errorMsg.header = inav_errorMsg.header = poseMsg.header;
-
-      
-      //   msf_errorMsg.pose.pose.position.x = state_out.data[px];// - poseMsg.pose.pose.position.x;
-      //   msf_errorMsg.pose.pose.position.y = state_out.data[py];// - poseMsg.pose.pose.position.y;
-      //   msf_errorMsg.pose.pose.position.z = state_out.data[pz];// - poseMsg.pose.pose.position.z;
-      //   msf_errorMsg.twist.twist.linear.x = state_out.data[vx];// - navvelMsg.twist.linear.x;
-      //   msf_errorMsg.twist.twist.linear.y = state_out.data[vy];// - navvelMsg.twist.linear.y;
-      //   msf_errorMsg.twist.twist.linear.z = state_out.data[vz];// - navvelMsg.twist.linear.z;
-
-      //   ukf_errorMsg.pose.pose.position.x = ukfMsg.pose.pose.position.x;// - poseMsg.pose.pose.position.x;
-      //   ukf_errorMsg.pose.pose.position.y = ukfMsg.pose.pose.position.y;// - poseMsg.pose.pose.position.y;
-      //   ukf_errorMsg.pose.pose.position.z = ukfMsg.pose.pose.position.z;// - poseMsg.pose.pose.position.z;
-      //   ukf_errorMsg.twist.twist.linear.x = ukfMsg.twist.twist.linear.x;// - navvelMsg.twist.linear.x;
-      //   ukf_errorMsg.twist.twist.linear.y = ukfMsg.twist.twist.linear.y;// - navvelMsg.twist.linear.y;
-      //   ukf_errorMsg.twist.twist.linear.z = ukfMsg.twist.twist.linear.z;// - navvelMsg.twist.linear.z;
-
-      //   inav_errorMsg.pose.pose.position.x = inertial_gps.pose.pose.position.x;// - poseMsg.pose.pose.position.x;
-      //   inav_errorMsg.pose.pose.position.y = inertial_gps.pose.pose.position.y;// - poseMsg.pose.pose.position.y;
-      //   inav_errorMsg.pose.pose.position.z = inertial_gps.pose.pose.position.z;// - poseMsg.pose.pose.position.z;
-      //   inav_errorMsg.twist.twist.linear.x = inertial_gps_vel.twist.linear.x;//- navvelMsg.twist.linear.x;
-      //   inav_errorMsg.twist.twist.linear.y = inertial_gps_vel.twist.linear.y;//- navvelMsg.twist.linear.y;
-      //   inav_errorMsg.twist.twist.linear.z = inertial_gps_vel.twist.linear.z;//- navvelMsg.twist.linear.z;
-
-
-      
-
-      // msf_error_pub.publish(msf_errorMsg);
-      // ukf_error_pub.publish(ukf_errorMsg);
-      // inav_error_pub.publish(inav_errorMsg);
-
-
-
     }
     if(state_fix_ts != state_out.header.stamp) {
       state_fix_ts = state_out.header.stamp;
@@ -840,15 +638,11 @@ int main(int argc, char **argv)
     // }
     if (navvel_ts != navvelOdomMsg.header.stamp) {
       //convert twist msg to body-frame due to ROS REF
-      tf::Quaternion q_(imuMsg.orientation.x,
-                        imuMsg.orientation.y,
-                        imuMsg.orientation.z,
-                        imuMsg.orientation.w);
       tf::Quaternion q_vec(navvelMsg.twist.linear.x,
                            navvelMsg.twist.linear.y,
                            navvelMsg.twist.linear.z,
                            0);
-      q_vec = q_.inverse() * q_vec * q_;
+      q_vec = Qwi_.inverse() * q_vec * Qwi_;
       tf::Vector3 v_body = q_vec.getAxis();
       navvelOdomMsg.twist.twist.linear.x = v_body.x();
       navvelOdomMsg.twist.twist.linear.y = v_body.y();
@@ -880,6 +674,56 @@ int main(int argc, char **argv)
 
 
 
+
+
+
+
+
+
+
+
+
+    //UPDATE STATUS
+    static ros::Time depth_task_stamp = cur_time;
+
+    if(cur_time - depth_task_stamp > ros::Duration(0.033)) { //Depth from realsense task 30 hz 
+      depth_task_stamp = cur_time;
+      // when realsense is bad all system gone!! be careful 
+      // if(ctx.get_device_count()==0)  {
+      //   OBV_IS_ENABLED = false;
+      //   OBV_IS_READY = false;
+      // }else{
+      //   OBV_IS_ENABLED = true;
+      // }
+      if(OBV_IS_ENABLED && IS_AGL_NOT_TOO_LOW()) {
+        OBV_IS_READY=true;
+      }else{
+        OBV_IS_READY=false;
+      }
+
+      if(OBV_IS_READY)
+        FIND_OBSTACLE();
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     //UPDATE STATUS
     static ros::Time low_task_stamp = cur_time;
 
@@ -902,6 +746,8 @@ int main(int argc, char **argv)
 
       StatusMsg.GPS_IN_USING = GPS_STATE;
       StatusMsg.VISION_IN_USING = VISION_STATE;
+      StatusMsg.SCALE = state_out.data[L];
+      StatusMsg.MSF = msf_is_running;
 
       status_pub.publish(StatusMsg);
 
@@ -947,6 +793,19 @@ int main(int argc, char **argv)
         vis_vel.twist.linear.x = 0.0;
       }
       vis_status_pub.publish(vis_vel);
+
+
+      if( quad_stateMsg.armed && 
+          quad_stateMsg.mode == "OFFBOARD") {
+        /* use bool for utility other check state eg.
+         battery voltage , load cpu etc*/
+        DRIVE_PATH(true);
+      }
+      else
+      {
+        /* we must continue to send msg although not offb mode */
+        RESET_POSE_INIT_REQUEST=true;
+      }
     }
 
 
@@ -1320,15 +1179,20 @@ void odom_callback(const crossover_nav::odom_data::ConstPtr& a)
     odom_pose_filtered.pose.pose.orientation.y = q_wc.y();
     odom_pose_filtered.pose.pose.orientation.z = q_wc.z();
 
-	printf("%.2f %.2f %.2f\n", Pwv0.x()
+	/*printf("%.2f %.2f %.2f\n", Pwv0.x()
 						   , Pwv0.y()
-						   , Pwv0.z());
+						   , Pwv0.z());*/
 
     static tf::TransformBroadcaster br;
     tf::Transform send_tf;
-    send_tf.setOrigin( Pwv0 );
+    send_tf.setOrigin( Pwv0 + 2*vision_offset + tf::Vector3(state_out.data[pwvx],state_out.data[pwvy],state_out.data[pwvz]));
     send_tf.setRotation(Qwv0);
     br.sendTransform(tf::StampedTransform(send_tf, ros::Time::now(), "world", "vision"));
+
+    tf::Transform Tvc_scaled;
+    Tvc_scaled.setOrigin( pose_vc.getAxis()/state_out.data[L]);
+    Tvc_scaled.setRotation(q_vc_rebuild);
+    br.sendTransform(tf::StampedTransform(Tvc_scaled, ros::Time::now(), "vision", "cam_caled"));
 
   }
 
@@ -1433,10 +1297,10 @@ inline void Init_filter() {
 void imu_callback(const sensor_msgs::Imu::ConstPtr& data) {
   imuMsg = *data;
 
-  tf::Quaternion Qwi_(imuMsg.orientation.x,
-                     imuMsg.orientation.y,
-                     imuMsg.orientation.z,
-                     imuMsg.orientation.w);
+  Qwi_=tf::Quaternion(imuMsg.orientation.x,
+                      imuMsg.orientation.y,
+                      imuMsg.orientation.z,
+                      imuMsg.orientation.w);
   tf::Matrix3x3 m(Qwi_);
   m.getRPY(ROLL_IMU, PITCH_IMU, YAW_IMU);
   //stack for vision alignment
@@ -1872,4 +1736,173 @@ inline bool gps_hacc_analysis() {
 
   // ROS_WARN_THROTTLE(0.25,"grad=%f  GPS score = %f\tstatus  = %s",grad_hacc,score,(score>0 ? "BAD" : "GOOD"));
   return (score>0 ? 0:1);
+}
+
+
+
+
+/* Drive path equation over 20hz */
+void DRIVE_PATH(bool READY ) {
+  if(!READY) return;
+
+  static float des_hx_init = lpeMsg.pose.pose.position.x;
+  static float des_hy_init = lpeMsg.pose.pose.position.y;
+  static float des_hz_init = lpeMsg.pose.pose.position.z;
+
+  if(RESET_POSE_INIT_REQUEST)
+  {
+    RESET_POSE_INIT_REQUEST=false;
+    des_hx_init = lpeMsg.pose.pose.position.x;
+    des_hy_init = lpeMsg.pose.pose.position.y;
+    des_hz_init = lpeMsg.pose.pose.position.z;
+    ROS_INFO_STREAM("INITED START EIGHT PATH AT "<<des_hx_init<<"\t"<<des_hy_init<<"\t"<<des_hz_init<<"\n");
+  }
+  // static float M_PI = 3.14159265359;
+  float des_hx,des_hy,des_hz;
+  float cur_time = ros::Time::now().toSec();
+
+  if(DRIVE_EIGHT_EQUATION) {
+    static unsigned long start_time;
+    static bool flag_init = false;
+    if(!flag_init) {
+      start_time = cur_time;
+      flag_init = true;
+    }
+    float t = 2*M_PI*(cur_time - start_time)*0.001/15 - M_PI;  // 8 sec to complete cycle
+    if(t>=M_PI) start_time=cur_time;
+
+    des_hx = des_hx_init + sin(t);
+    des_hy = des_hy_init + sin(t)*cos(t);
+    des_hz = des_hz_init;
+    // saytab(des_hx);
+    // saytab(des_hy);
+    // sayend(t);
+  }
+  else{
+    des_hx_init+=v_avoid.x()*0.1;
+    des_hy_init+=v_avoid.y()*0.1;
+
+    des_hx = des_hx_init;
+    des_hy = des_hy_init;
+    des_hz = des_hz_init;
+  }
+
+
+  //prepare to out
+  geometry_msgs::PoseStamped pose;
+  pose.pose.position.x = des_hx;
+  pose.pose.position.y = des_hy;
+  pose.pose.position.z = des_hz;
+
+  local_pos_pub.publish(pose);
+
+
+
+}
+
+
+
+
+
+
+
+
+
+inline void FIND_OBSTACLE() 
+{
+        // This call waits until a new coherent set of frames is available on a device
+      // Calls to get_frame_data(...) and get_frame_timestamp(...) on a device will return stable values until wait_for_frames(...) is called
+      dev->wait_for_frames();
+
+      // Retrieve depth data, which was previously configured as a 640 x 480 image of 16-bit depth values
+      const uint16_t * depth_frame = reinterpret_cast<const uint16_t *>(dev->get_frame_data(rs::stream::depth));
+
+      // Print a simple text-based representation of the image, by breaking it into 10x20 pixel regions and and approximating the coverage of pixels within one meter
+      char buffer[(640/10+1)*(480/20)+1];
+      char * out = buffer;
+      int coverage[64] = {};
+      for(int y=0; y<480; ++y)
+      {
+          for(int x=0; x<640; ++x)
+          {
+              int depth = *depth_frame++;
+              if(depth > 0 && depth < one_meter) ++coverage[x/10];
+          }
+
+          if(y%20 == 19)
+          {
+              for(int & c : coverage)
+              {
+                  *out++ = " .:nhWWWW"[c/25]; //scale of depth (char)
+                  c = 0;
+              }
+              *out++ = '\n';
+          }
+      }
+      *out++ = 0;
+
+      x_av=32;
+      y_av=11;
+      num_grid=0;
+      for(int i=0;i<(640/10+1)*(480/20)+1;i++)
+      {
+          if(i%(640/10+1)==0) row_grid++;
+
+          if(buffer[i]=='W')
+              {
+                  x_av+=(i%(640/10+1));
+                  y_av+=row_grid;
+                  num_grid++;
+              }
+      }
+      if(num_grid!=0)
+      {
+          x_av/=num_grid;
+          y_av/=num_grid;
+          row_grid=-1;
+      }
+      x_av-=32;
+      y_av-=11;
+      // printf("\n%s", buffer);
+      // printf("\nweight = %.2f\t%.2f\t%d", x_av,y_av,num_grid);
+
+
+      //if x_av positive mean quad must left (+y body vel)
+      //if y_av positive mean object below quad must go up (+z body vel)
+      //center is zero,zero
+      //if num is positive quad must 
+      //y_av not used yet (height avoidance)
+      const float VEL_MAX = 0.5;
+      float x_conv = -((float)num_grid)/450;
+      float y_conv = VEL_MAX*(x_av/32)/**(((float)num_grid)/250)*/; //if num_grid is low (<20) mean obstacle maybe noise so be relax
+
+      if(y_conv>0)
+      { 
+        y_conv = Min(Max(y_conv,0),VEL_MAX);
+        y_conv = -y_conv + VEL_MAX+0.2;
+      }
+      else //(y_conv<0)
+      {
+        y_conv = Min(Max(y_conv,-VEL_MAX),0);
+        y_conv = -y_conv - VEL_MAX-0.2;
+      }
+
+      if(fabs(x_conv) < 0.4) x_conv=0;
+
+      if(num_grid < 10) y_conv =0;
+      tf::Vector3 vel_b_avoid(x_conv,
+                              y_conv,
+                              0);
+      // Uncommend this line below to visualize from terminal
+      printf("\n%s", buffer);
+      
+      // convert this to earth frame
+
+      tf::Quaternion vel_b_q(vel_b_avoid.x(),
+                             vel_b_avoid.y(),
+                             vel_b_avoid.z(),
+                             0);
+      v_avoid = (Qwi_*vel_b_q*Qwi_.inverse()).getAxis();
+
+      printf("avoid = %.2f\t%.2f\n", vel_b_avoid.x(),vel_b_avoid.y()/**(((float)num_grid)/400)*/);
 }

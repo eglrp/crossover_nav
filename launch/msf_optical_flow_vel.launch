@@ -33,7 +33,7 @@
     <param name="HOME_LAT_NO_GPS" value="7.0064177" />
     <param name="HOME_LNG_NO_GPS" value="100.5025051" />
 
-    <param name="REALSENSE_ENABLE" value = "true" />
+    <param name="REALSENSE_ENABLE" value = "false" />
     <node name="crossover" pkg="crossover_nav" type="crossover" output="screen" respawn="true" >
 
     </node>
@@ -70,7 +70,7 @@
     </node> -->
 
 <!-- CAUTION !! please take 10 sec before init this.. to make sure tz working ok -->
-    <node name="pose_from_compass_position_gps" pkg="msf_updates" type="position_pose_pressure_sensor" clear_params="true" output="screen" respawn="true" >
+    <node name="MSF" pkg="msf_updates" type="position_pose_pressure_sensor" clear_params="true" output="screen" respawn="true" >
 
 
         <!--IMU core sensor-->
@@ -97,13 +97,13 @@
 
         <remap from="msf_updates/imu_input" to="/mavros/imu/data" />
         <!-- Optical flow position test -->
-        <remap from="msf_updates/flow_input" to="/mavros/px4flow/raw/optical_flow_rad" />
-  
+       <remap from="msf_updates/flow_input" to="/mavros/px4flow/raw/optical_flow_rad" />
+ 
         <!-- <remap from="msf_updates/mag_input" to="/mavros/imu/mag" /> -->
 
         <remap from="msf_updates/agl_input" to="/mavros/px4flow/ground_distance" />
-
-        <rosparam file="$(find msf_updates)/slam_gps_pressure.yaml"/>
+        <rosparam file="$(find crossover_nav)/launch/msf.yaml"/>
+        <!-- <rosparam file="$(find msf_updates)/slam_gps_pressure.yaml"/> -->
 
 	<remap from="/msf_core/pose" to="/mavros/vision_pose/pose_cov" />
     </node>
