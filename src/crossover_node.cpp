@@ -727,7 +727,8 @@ int main(int argc, char **argv)
     //UPDATE STATUS
     static ros::Time low_task_stamp = cur_time;
 
-    if(cur_time - low_task_stamp > ros::Duration(2) || status_updated) { //low priority task 0.5 hz    low_task_stamp = cur_time;
+    if(cur_time - low_task_stamp > ros::Duration(2) || status_updated) { //low priority task 0.5 hz    
+      low_task_stamp = cur_time;
 
       status_updated=false;
       tf::Vector3 gps_off_ = 2*gps_offset;
