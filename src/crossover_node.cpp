@@ -727,8 +727,7 @@ int main(int argc, char **argv)
     //UPDATE STATUS
     static ros::Time low_task_stamp = cur_time;
 
-    if(cur_time - low_task_stamp > ros::Duration(2) || status_updated) { //low priority task 0.5 hz 
-      low_task_stamp = cur_time;
+    if(cur_time - low_task_stamp > ros::Duration(2) || status_updated) { //low priority task 0.5 hz    low_task_stamp = cur_time;
 
       status_updated=false;
       tf::Vector3 gps_off_ = 2*gps_offset;
@@ -795,8 +794,7 @@ int main(int argc, char **argv)
       vis_status_pub.publish(vis_vel);
 
 
-      if( quad_stateMsg.armed && 
-          quad_stateMsg.mode == "OFFBOARD") {
+      if( quad_stateMsg.mode == "OFFBOARD") {
         /* use bool for utility other check state eg.
          battery voltage , load cpu etc*/
         DRIVE_PATH(true);
@@ -805,6 +803,19 @@ int main(int argc, char **argv)
       {
         /* we must continue to send msg although not offb mode */
         RESET_POSE_INIT_REQUEST=true;
+        float des_hx_init = lpeMsg.pose.pose.position.x;
+        float des_hy_init = lpeMsg.pose.pose.position.y;
+        float des_hz_init = lpeMsg.pose.pose.position.z;
+
+        geometry_msgs::PoseStamped pose;
+        pose.pose.position.x = des_hx_init;
+        pose.pose.position.y = des_hy_init;
+        pose.pose.position.z = des_hz_init;
+
+        //send a few setpoints before starting "DO THIS EVERY TIME BEFORE OFFBOARD"
+        for(int i = 4; ros::ok() && i > 0; --i){
+          local_pos_pub.publish(pose);
+        }
       }
     }
 
@@ -1739,40 +1750,46 @@ inline bool gps_hacc_analysis() {
 }
 
 
-
-
 /* Drive path equation over 20hz */
 void DRIVE_PATH(bool READY ) {
   if(!READY) return;
+  static unsigned long start_time;
+  static bool flag_init = false;
 
   static float des_hx_init = lpeMsg.pose.pose.position.x;
   static float des_hy_init = lpeMsg.pose.pose.position.y;
   static float des_hz_init = lpeMsg.pose.pose.position.z;
-
+  static tf::Quaternion Q_init(imuMsg.orientation.x,
+                     imuMsg.orientation.y,
+                     imuMsg.orientation.z,
+                     imuMsg.orientation.w);
   if(RESET_POSE_INIT_REQUEST)
   {
     RESET_POSE_INIT_REQUEST=false;
+    flag_init=false;
     des_hx_init = lpeMsg.pose.pose.position.x;
     des_hy_init = lpeMsg.pose.pose.position.y;
     des_hz_init = lpeMsg.pose.pose.position.z;
+Q_init = tf::Quaternion(imuMsg.orientation.x,
+                     imuMsg.orientation.y,
+                     imuMsg.orientation.z,
+                     imuMsg.orientation.w);
     ROS_INFO_STREAM("INITED START EIGHT PATH AT "<<des_hx_init<<"\t"<<des_hy_init<<"\t"<<des_hz_init<<"\n");
-  }
+  } 
   // static float M_PI = 3.14159265359;
   float des_hx,des_hy,des_hz;
-  float cur_time = ros::Time::now().toSec();
+  unsigned long cur_time = millis();
 
   if(DRIVE_EIGHT_EQUATION) {
-    static unsigned long start_time;
-    static bool flag_init = false;
     if(!flag_init) {
       start_time = cur_time;
-      flag_init = true;
+      flag_init = true;  
     }
     float t = 2*M_PI*(cur_time - start_time)*0.001/15 - M_PI;  // 8 sec to complete cycle
-    if(t>=M_PI) start_time=cur_time;
+    if(t>=M_PI) start_time=cur_time;  
 
-    des_hx = des_hx_init + sin(t);
-    des_hy = des_hy_init + sin(t)*cos(t);
+    des_hx = des_hx_init + sin(t);  
+    des_hy = des_hy_init + sin(t)*cos(t);  
     des_hz = des_hz_init;
     // saytab(des_hx);
     // saytab(des_hy);
@@ -1793,13 +1810,17 @@ void DRIVE_PATH(bool READY ) {
   pose.pose.position.x = des_hx;
   pose.pose.position.y = des_hy;
   pose.pose.position.z = des_hz;
+  pose.pose.orientation.x = Q_init.x();
+  pose.pose.orientation.y = Q_init.y();
+  pose.pose.orientation.z = Q_init.z();
+  pose.pose.orientation.w = Q_init.w();
+
 
   local_pos_pub.publish(pose);
 
 
 
 }
-
 
 
 
