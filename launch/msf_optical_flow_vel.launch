@@ -33,7 +33,7 @@
     <param name="HOME_LAT_NO_GPS" value="7.0064177" />
     <param name="HOME_LNG_NO_GPS" value="100.5025051" />
 
-    <param name="REALSENSE_ENABLE" value = "false" />
+    <param name="REALSENSE_ENABLE" value = "true" />
     <node name="crossover" pkg="crossover_nav" type="crossover" output="screen" respawn="true" >
 
     </node>
@@ -96,7 +96,7 @@
 
         <remap from="msf_updates/imu_input" to="/mavros/imu/data" />
         <!-- Optical flow position test -->
-       <remap from="msf_updates/flow_input" to="/mavros/px4flow/raw/optical_flow_rad" />
+       <!-- <remap from="msf_updates/flow_input" to="/mavros/px4flow/raw/optical_flow_rad" /> -->
  
         <!-- <remap from="msf_updates/mag_input" to="/mavros/imu/mag" /> -->
 

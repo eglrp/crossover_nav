@@ -1797,8 +1797,8 @@ Q_init = tf::Quaternion(imuMsg.orientation.x,
     // sayend(t);
   }
   else{
-    des_hx_init+=v_avoid.x()*0.1;
-    des_hy_init+=v_avoid.y()*0.1;
+    des_hx_init+=v_avoid.x()*0.1*2;
+    des_hy_init+=v_avoid.y()*0.1*2;
 
     des_hx = des_hx_init;
     des_hy = des_hy_init;
