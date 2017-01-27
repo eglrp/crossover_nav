@@ -33,7 +33,7 @@
     <param name="HOME_LAT_NO_GPS" value="7.0064177" />
     <param name="HOME_LNG_NO_GPS" value="100.5025051" />
 
-    <param name="REALSENSE_ENABLE" value = "true" />
+    <param name="REALSENSE_ENABLE" value = "false" />
     <node name="crossover" pkg="crossover_nav" type="crossover" output="screen" respawn="true" >
 
     </node>
@@ -84,7 +84,6 @@
         <!-- raw gps test no cut --> 
         <!-- plz edit .yaml to fix with covariance and delay -->
         <remap from="msf_updates/gpsvel_input"  to="/mavros/global_position/raw/gps_vel" />
-        <!-- <remap from="msf_updates/gpsvel_input"  to="/imu_max/Inertial_nav_vel" /> -->
 
         <!--DISTORTED Pose senbsor-->
         <remap from="msf_updates/pose_sensor_pose_with_covariance_input" to="/msf_distort/pose_with_covariance_output" />

@@ -71,7 +71,7 @@ inline long micros() {
 //----------------------------------
 #include "useful_fn.h"
 #include "config.h"
-float GPS_hAcc = 10;
+float GPS_hAcc = 10; 
 float GPS_velAcc = 10;
 float GPS_vel_EAST = 0;
 float GPS_vel_NORTH = 0;
@@ -1397,7 +1397,7 @@ void gps_callback(const sensor_msgs::NavSatFix::ConstPtr& data) {
   poseMsg.pose.pose.position.y = y;
   poseMsg.pose.pose.position.z = GPS.alt - GPS_HOME.alt;
   poseMsg.pose.pose.orientation = imuMsg.orientation;
-  poseMsg.pose.covariance[0]=poseMsg.pose.covariance[7]=GPS_hAcc;
+  poseMsg.pose.covariance[0]=poseMsg.pose.covariance[7]=GPS_hAcc*invSqrt(5); //discretized by 5 hz (m/sqr(hz))
   poseMsg.pose.covariance[14]=9999;
   poseMsg.pose.covariance[21]=GPS_velAcc;
   poseMsg.pose.covariance[28]=GPS_velAcc;

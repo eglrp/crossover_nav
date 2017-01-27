@@ -1,5 +1,5 @@
 
-data_playback: false
+data_playback: true
 
 
 #########IMU PARAMETERS#######
@@ -16,10 +16,11 @@ core/core_fixed_bias: false
 # core/core_noise_gyrbias: 0.00000212
 
 #exteme acc false tune
-core/core_noise_acc: 0.3 #0.8 #0.013
+core/core_noise_acc: 0.3 #0.8 #0.013 
 core/core_noise_accbias: 0.005 #0.000108
 core/core_noise_gyr: 0.00008726
 core/core_noise_gyrbias: 0.000008726 
+
 
 
 ####### ADIS
@@ -27,6 +28,25 @@ core/core_noise_gyrbias: 0.000008726
 #core/core_noise_accbias: 8e-5
 #core/core_noise_gyr: 0.0004
 #core/core_noise_gyrbias: 3e-6
+
+position_pose_pressure_sensor/position_delay: 0.73 #0.29 #0.01 #set minimum to Inertial nav output / set 0.29 to raw gps
+position_pose_pressure_sensor/position_noise_meas: 2.0  #set minimum to Inertial nav output / set 2.0 to raw gps
+position_pose_pressure_sensor/position_use_fixed_covariance: false #set fix if using Inertial nav output / set no fix (false) to raw gps
+position_sensor/position_use_fixed_covariance: false #set fix if using Inertial nav output / set no fix (false) to raw gps
+
+#init position offset prism imu
+position_sensor/init/p_ip/x: 0 #-0.02    
+position_sensor/init/p_ip/y: 0 #0.05
+position_sensor/init/p_ip/z: 0
+position_sensor/position_absolute_measurements: true
+
+
+
+position_pose_pressure_sensor/core_height: 0.2
+position_pose_pressure_sensor/position_yaw_init: 0 #-128.0
+position_pose_pressure_sensor/position_fixed_p_ip: true
+
+
 
 pose_sensor/pose_initial_scale: 1
 pose_sensor/pose_fixed_scale: false
@@ -75,22 +95,7 @@ position_pose_pressure_sensor/pose_fixed_p_wv: false
 position_pose_pressure_sensor/pose_fixed_q_wv: true
 position_pose_pressure_sensor/pose_delay: 0.07
 
-position_pose_pressure_sensor/position_delay: 0.15 #0.29 #0.01 #set minimum to Inertial nav output / set 0.29 to raw gps
-position_pose_pressure_sensor/position_noise_meas: 2.0  #set minimum to Inertial nav output / set 2.0 to raw gps
-position_pose_pressure_sensor/position_use_fixed_covariance: false #set fix if using Inertial nav output / set no fix (false) to raw gps
-position_sensor/position_use_fixed_covariance: false #set fix if using Inertial nav output / set no fix (false) to raw gps
 
-#init position offset prism imu
-position_sensor/init/p_ip/x: 0 #-0.02    
-position_sensor/init/p_ip/y: 0 #0.05
-position_sensor/init/p_ip/z: 0
-position_sensor/position_absolute_measurements: true
-
-
-
-position_pose_pressure_sensor/core_height: 0.2
-position_pose_pressure_sensor/position_yaw_init: 0 #-128.0
-position_pose_pressure_sensor/position_fixed_p_ip: true
 
 
 velocity_sensor/velocity_use_fixed_covariance: true 
