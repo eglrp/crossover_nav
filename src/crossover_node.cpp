@@ -1807,12 +1807,12 @@ Q_init = tf::Quaternion(imuMsg.orientation.x,
   else{
     const float pwm_to_vel = (1.0)/600;  //1.0 m/s desired in each direction
 
-    float pitch_stick =  (RCInMsg.channels[1]-1500);
+    float pitch_stick = -(RCInMsg.channels[1]-1500);
     float roll_stick  = -(RCInMsg.channels[0]-1500);
-    float thot_stick  =  (RCInMsg.channels[3]-1500);
+    float thot_stick  =  (RCInMsg.channels[2]-1500);
     applyDeadband(pitch_stick, 50);
     applyDeadband(roll_stick, 50);
-    applyDeadband(thot_stick, 50);
+    applyDeadband(thot_stick, 70);
 
     //convert rcin to velocity (check direction plz)
     tf::Quaternion vd_b(pitch_stick*pwm_to_vel,
