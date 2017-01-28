@@ -416,7 +416,7 @@ int main(int argc, char **argv)
   n.param("LR_EXPOSURE", LR_EXPOSURE, 7);
   n.param("LR_GAIN", LR_GAIN, 200);
   n.param("LR_EMITTER_ENABLED", LR_EMITTER_ENABLED, true);
-  n.param("TERMINAL_VISUALIZATION", TERMINAL_VISUALIZATION, true);
+  n.param("TERMINAL_VISUALIZATION", TERMINAL_VISUALIZATION, false);
   // n.param("DEBUG_CONTROL_OUT" , DEBUG_CONTROL_OUT, false);
   // n.param("DEBUG_PPID_OUT"    , DEBUG_PPID_OUT, false);
   // n.param("DEBUG_PPID2_OUT"   , DEBUG_PPID2_OUT, false);
