@@ -43,7 +43,9 @@
 
 // First include the librealsense C++ header file
 #include <librealsense/rs.hpp>
-
+#include <atomic>
+#include <map>
+#include "concurrency.hpp"
 
 //function convert arduino to ros
 //------------ROS version-------
@@ -224,6 +226,11 @@ double CAMERA_PITCH;
 double HOME_OFF_x;
 double HOME_OFF_y;
 bool REALSENSE_ENABLE=false;
+bool LR_EMITTER_ENABLED=true;
+bool LR_AUTO_EXPOSURE_ENABLED=false;
+int LR_GAIN;
+int LR_EXPOSURE; 
+bool TERMINAL_VISUALIZATION=false;
 
 
 enum {
@@ -341,6 +348,13 @@ enum {
 // Create a context object. This object owns the handles to all connected realsense devices.
 rs::context ctx;
 rs::device * dev = ctx.get_device(0);
+const auto streams = 1;
+std::vector<uint16_t> supported_streams = { (uint16_t)rs::stream::depth};
+const size_t max_queue_size = 1; // To minimize latency prefer frame drops
+single_consumer_queue<rs::frame> frames_queue[streams];
+// texture_buffer buffers[streams];
+std::atomic<bool> running(true);
+
 // Determine depth value corresponding to one meter
 const uint16_t one_meter = static_cast<uint16_t>(3.0f / dev->get_depth_scale());  
 float x_av=0.0;
@@ -398,6 +412,11 @@ int main(int argc, char **argv)
   n.param("HOME_LNG_NO_GPS", GPS_HOME.lng, 100.5025051);
 
   n.param("REALSENSE_ENABLE", REALSENSE_ENABLE, false);
+  n.param("LR_AUTO_EXPOSURE_ENABLED", LR_AUTO_EXPOSURE_ENABLED, false);
+  n.param("LR_EXPOSURE", LR_EXPOSURE, 7);
+  n.param("LR_GAIN", LR_GAIN, 200);
+  n.param("LR_EMITTER_ENABLED", LR_EMITTER_ENABLED, true);
+  n.param("TERMINAL_VISUALIZATION", TERMINAL_VISUALIZATION, true);
   // n.param("DEBUG_CONTROL_OUT" , DEBUG_CONTROL_OUT, false);
   // n.param("DEBUG_PPID_OUT"    , DEBUG_PPID_OUT, false);
   // n.param("DEBUG_PPID2_OUT"   , DEBUG_PPID2_OUT, false);
@@ -496,8 +515,47 @@ int main(int argc, char **argv)
       printf("\nUsing device 0, an %s\n", dev->get_name());
       printf("    Serial number: %s\n", dev->get_serial());
       printf("    Firmware version: %s\n", dev->get_firmware_version());
+
+    struct resolution
+    {
+        int width;
+        int height;
+        rs::format format;
+    };
+    std::map<rs::stream, resolution> resolutions;
+
+    // if(dev->supports(rs::capabilities::infrared2))
+    //         supported_streams.push_back((uint16_t)rs::stream::infrared2);
+
+    for (auto i : supported_streams)
+    {
+        dev->set_frame_callback((rs::stream)i, [dev, &running, &frames_queue, &resolutions, i, max_queue_size](rs::frame frame)
+        {
+            if (running && frames_queue[i].size() <= max_queue_size) frames_queue[i].enqueue(std::move(frame));
+        });
+    }
+
+
+
+
+
       // Configure depth to run at VGA resolution at 30 frames per second
       dev->enable_stream(rs::stream::depth, 640, 480, rs::format::z16, 30);
+      // rs::option::r200_lr_auto_exposure_enabled;
+      bool aee = dev->get_option(rs::option::r200_lr_auto_exposure_enabled);
+      printf("Startup: autoexposure: %d\n",aee) ;
+      bool ee =  dev->get_option(rs::option::r200_emitter_enabled);
+      printf("Startup: Emitter: %d\n", ee) ;
+      dev->set_option(rs::option::r200_lr_auto_exposure_enabled, LR_AUTO_EXPOSURE_ENABLED);
+      dev->set_option(rs::option::r200_emitter_enabled, LR_EMITTER_ENABLED);
+      dev->set_option(rs::option::r200_lr_exposure, LR_EXPOSURE); //7 for outdoor 400 for indoor
+      dev->set_option(rs::option::r200_lr_gain, LR_GAIN);
+      aee = dev->get_option(rs::option::r200_lr_auto_exposure_enabled);
+      printf("Settings: autoexposure to: %d\n",aee) ;
+      ee =  dev->get_option(rs::option::r200_emitter_enabled);
+      printf("Settings: Emitter to: %d\n", ee) ;
+
+
       dev->start();
     }
     
@@ -1779,7 +1837,7 @@ void DRIVE_PATH(bool READY ) {
     des_hx_init = lpeMsg.pose.pose.position.x;
     des_hy_init = lpeMsg.pose.pose.position.y;
     des_hz_init = lpeMsg.pose.pose.position.z;
-Q_init = tf::Quaternion(imuMsg.orientation.x,
+  Q_init = tf::Quaternion(imuMsg.orientation.x,
                      imuMsg.orientation.y,
                      imuMsg.orientation.z,
                      imuMsg.orientation.w);
@@ -1819,9 +1877,9 @@ Q_init = tf::Quaternion(imuMsg.orientation.x,
                         roll_stick*pwm_to_vel,
                         thot_stick*pwm_to_vel,
                          0);
-    printf("vd=%.2f,%.2f,%.2f\n", vd_b.x()
-                                , vd_b.y()
-                                , vd_b.z());
+    // printf("vd=%.2f,%.2f,%.2f\n", vd_b.x()
+                                // , vd_b.y()
+                                // , vd_b.z());
     //Convert BODY to ENU frame
     tf::Vector3 vd = (Qwi_ * vd_b * Qwi_.inverse()).getAxis();
 
@@ -1849,8 +1907,6 @@ Q_init = tf::Quaternion(imuMsg.orientation.x,
 
   local_pos_pub.publish(pose);
 
-
-
 }
 
 
@@ -1862,12 +1918,25 @@ Q_init = tf::Quaternion(imuMsg.orientation.x,
 
 inline void FIND_OBSTACLE() 
 {
-        // This call waits until a new coherent set of frames is available on a device
-      // Calls to get_frame_data(...) and get_frame_timestamp(...) on a device will return stable values until wait_for_frames(...) is called
-      dev->wait_for_frames();
+
+        rs::frame frame;
+        const uint16_t * depth_frame;// = reinterpret_cast<const uint16_t *>(dev->get_frame_data(rs::stream::depth));
+
+        for (auto i = 0; i < streams; i++)
+        {
+              if (frames_queue[i].try_dequeue(&frame))
+            {
+                // buffers[i].upload(frame);
+                depth_frame = reinterpret_cast<const uint16_t *>(frame.get_data());
+            }
+        }
+
+      //   // This call waits until a new coherent set of frames is available on a device
+      // // Calls to get_frame_data(...) and get_frame_timestamp(...) on a device will return stable values until wait_for_frames(...) is called
+      // dev->wait_for_frames();
 
       // Retrieve depth data, which was previously configured as a 640 x 480 image of 16-bit depth values
-      const uint16_t * depth_frame = reinterpret_cast<const uint16_t *>(dev->get_frame_data(rs::stream::depth));
+      // const uint16_t * depth_frame;// = reinterpret_cast<const uint16_t *>(dev->get_frame_data(rs::stream::depth));
 
       // Print a simple text-based representation of the image, by breaking it into 10x20 pixel regions and and approximating the coverage of pixels within one meter
       char buffer[(640/10+1)*(480/20)+1];
@@ -1915,7 +1984,8 @@ inline void FIND_OBSTACLE()
       }
       x_av-=32;
       y_av-=11;
-      // printf("\n%s", buffer);
+      if(TERMINAL_VISUALIZATION)
+        printf("\n%s", buffer);
       // printf("\nweight = %.2f\t%.2f\t%d", x_av,y_av,num_grid);
 
 
