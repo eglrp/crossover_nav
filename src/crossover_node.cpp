@@ -11,6 +11,7 @@
 
 #include "mavros_msgs/Altitude.h"
 #include "mavros_msgs/State.h"
+#include "mavros_msgs/RCIn.h"
 
 #include "std_msgs/Bool.h"
 #include "geometry_msgs/PointStamped.h"
@@ -146,6 +147,7 @@ nav_msgs::Odometry altMsg,
 
 mavros_msgs::Altitude baro_alt_msg;
 mavros_msgs::State quad_stateMsg;
+mavros_msgs::RCIn RCInMsg;
 
 crossover_nav::Ack ackMsg;
 crossover_nav::Navdata NavMsg;
@@ -278,6 +280,7 @@ void gps_callback(const sensor_msgs::NavSatFix::ConstPtr& data);
 void gps_vel_callback(const geometry_msgs::TwistStamped::ConstPtr& data);
 void quad_state_callback(const mavros_msgs::State::ConstPtr& data);
 void lpe_callback(const nav_msgs::Odometry::ConstPtr& data);
+void rcin_callback(const mavros_msgs::RCIn::ConstPtr& data);
 // void ukf_callback(const nav_msgs::Odometry::ConstPtr& data) {
 //   ukfMsg = *data;
 // }
@@ -300,7 +303,6 @@ void map_reveseprojector(Location *_GPS, Location _GPS_HOME, double x, double y)
 inline void slam_prescale(ros::Time cur_time);
 inline void Init_filter();
 inline void Distort_Service();
-
 
 ros::Publisher imu_pub ;//
 ros::Publisher pose ;//e<g
@@ -471,6 +473,7 @@ int main(int argc, char **argv)
   ros::Subscriber lpe_sub = n.subscribe<nav_msgs::Odometry>("/mavros/local_position/odom", 10, lpe_callback);
   ros::Subscriber odom_sub = n.subscribe<crossover_nav::odom_data>("/slam", 10, odom_callback);
   ros::Subscriber state_sub = n.subscribe<sensor_fusion_comm::DoubleArrayStamped>("/msf_core/state_out", 10, state_out_callback);
+  ros::Subscriber rcin_sub = n.subscribe<mavros_msgs::RCIn>("/mavros/rc/in", 10, rcin_callback);
   // ros::Subscriber ukf_sub = n.subscribe<nav_msgs::Odometry>("/odometry/filtered", 10, ukf_callback);
 
 
@@ -510,6 +513,7 @@ int main(int argc, char **argv)
   }
   state_out.data.resize(sizestate);
 
+  RCInMsg.channels.resize(8);
 
 
   odom_pose_filtered.header.frame_id = "odom";
@@ -1434,6 +1438,10 @@ void lpe_callback(const nav_msgs::Odometry::ConstPtr& data) {
   // //get data z to use scale slam  # move to using state z for init slam scale
   // baro_inertial_z_late = get_pose_nav_z_buffer(baroaltABSMsg.point.z);
 }
+void rcin_callback(const mavros_msgs::RCIn::ConstPtr& data) 
+{
+  RCInMsg = *data;
+}
 void state_out_callback(const sensor_fusion_comm::DoubleArrayStamped::ConstPtr& data) {
   state_out = *data;
   //ROS_INFO_STREAM("state\t"  << state_out.data[4] << "\t"  << state_out.data[5] << "\n" );
@@ -1751,7 +1759,7 @@ inline bool gps_hacc_analysis() {
 }
 
 
-/* Drive path equation over 20hz */
+/* Drive path equation over 10hz */
 void DRIVE_PATH(bool READY ) {
   if(!READY) return;
   static unsigned long start_time;
@@ -1797,8 +1805,30 @@ Q_init = tf::Quaternion(imuMsg.orientation.x,
     // sayend(t);
   }
   else{
-    des_hx_init+=v_avoid.x()*0.1*2;
-    des_hy_init+=v_avoid.y()*0.1*2;
+    const float pwm_to_vel = (1.0)/600;  //1.0 m/s desired in each direction
+
+    float pitch_stick =  (RCInMsg.channels[1]-1500);
+    float roll_stick  = -(RCInMsg.channels[0]-1500);
+    float thot_stick  =  (RCInMsg.channels[3]-1500);
+    applyDeadband(pitch_stick, 50);
+    applyDeadband(roll_stick, 50);
+    applyDeadband(thot_stick, 50);
+
+    //convert rcin to velocity (check direction plz)
+    tf::Quaternion vd_b(pitch_stick*pwm_to_vel,
+                        roll_stick*pwm_to_vel,
+                        thot_stick*pwm_to_vel,
+                         0);
+    printf("vd=%.2f,%.2f,%.2f\n", vd_b.x()
+                                , vd_b.y()
+                                , vd_b.z());
+    //Convert BODY to ENU frame
+    tf::Vector3 vd = (Qwi_ * vd_b * Qwi_.inverse()).getAxis();
+
+
+    des_hx_init+=(v_avoid.x()*0.1*2 + vd.x()*0.1);
+    des_hy_init+=(v_avoid.y()*0.1*2 + vd.y()*0.1);
+    des_hz_init+=vd.z()*0.1;
 
     des_hx = des_hx_init;
     des_hy = des_hy_init;

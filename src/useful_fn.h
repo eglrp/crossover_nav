@@ -6,14 +6,14 @@
 
 
 
-#define applyDeadband(value, deadband)  \
-  if(abs(value) < deadband) {           \
-    value = 0;                          \
-  } else if(value > 0){                 \
-    value -= deadband;                  \
-  } else if(value < 0){                 \
-    value += deadband;                  \
-  }
+// #define applyDeadband(value, deadband)  \
+//   if(abs(value) < deadband) {           \
+//     value = 0;                          \
+//   } else if(value > 0){                 \
+//     value -= deadband;                  \
+//   } else if(value < 0){                 \
+//     value += deadband;                  \
+//   }
 #define wrap_180(x) (x < -180 ? x+360 : (x > 180 ? x - 360: x))
 #define wrap_pi(x) (x < -3.14 ? x+6.28 : (x > 3.14 ? x - 6.28: x))
 #define HALF_M_PI 1.570796
