@@ -2,7 +2,7 @@
     <param name="TERMINAL_VISUALIZATION" value="true" />
     <param name="LR_EMITTER_ENABLED" value="true" />
     <param name="LR_AUTO_EXPOSURE_ENABLED" value="false" />
-    <param name="LR_EXPOSURE" value="400" />
+    <param name="LR_EXPOSURE" value="7" />
     <param name="LR_GAIN" value="200" />
 
     <param name="DELAY_NAV" value="0.29" />

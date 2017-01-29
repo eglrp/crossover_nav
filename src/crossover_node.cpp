@@ -356,7 +356,7 @@ single_consumer_queue<rs::frame> frames_queue[streams];
 std::atomic<bool> running(true);
 
 // Determine depth value corresponding to one meter
-const uint16_t one_meter = static_cast<uint16_t>(3.0f / dev->get_depth_scale());  
+const uint16_t one_meter = static_cast<uint16_t>(4.0f / dev->get_depth_scale());  
 float x_av=0.0;
 float y_av=0.0;
 int num_grid=0;
@@ -1863,7 +1863,7 @@ void DRIVE_PATH(bool READY ) {
     // sayend(t);
   }
   else{
-    const float pwm_to_vel = (1.0)/600;  //1.0 m/s desired in each direction
+    const float pwm_to_vel = (2.0)/600;  //1.0 m/s desired in each direction
 
     float pitch_stick = -(RCInMsg.channels[1]-1500);
     float roll_stick  = -(RCInMsg.channels[0]-1500);
@@ -1884,8 +1884,8 @@ void DRIVE_PATH(bool READY ) {
     tf::Vector3 vd = (Qwi_ * vd_b * Qwi_.inverse()).getAxis();
 
 
-    des_hx_init+=(v_avoid.x()*0.1*2 + vd.x()*0.1);
-    des_hy_init+=(v_avoid.y()*0.1*2 + vd.y()*0.1);
+    des_hx_init+=(v_avoid.x()*0.1*3 + vd.x()*0.1);
+    des_hy_init+=(v_avoid.y()*0.1*3 + vd.y()*0.1);
     des_hz_init+=vd.z()*0.1;
 
     des_hx = des_hx_init;
@@ -2009,7 +2009,7 @@ inline void FIND_OBSTACLE()
         y_conv = -y_conv - VEL_MAX-0.2;
       }
 
-      if(fabs(x_conv) < 0.4) x_conv=0;
+      if(fabs(x_conv) < 0.3) x_conv=0;
 
       if(num_grid < 10) y_conv =0;
       tf::Vector3 vel_b_avoid(x_conv,
