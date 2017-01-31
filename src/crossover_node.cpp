@@ -38,6 +38,8 @@
 #include <dynamic_reconfigure/Reconfigure.h>
 #include <dynamic_reconfigure/Config.h>
 
+#include <rovio/SrvResetToPose.h>
+
 #include <termios.h>
 
 
@@ -137,7 +139,7 @@ geometry_msgs::TwistStamped navvelMsg,
 geometry_msgs::PointStamped baroaltABSMsg;
 double baroaltABSMsg_init;
 // geometry_msgs::Vector3Stamped magMsg;
-nav_msgs::Odometry pose_navMsg, msf_data;
+nav_msgs::Odometry pose_navMsg, msf_data, rovioMsg;
 
 nav_msgs::Odometry altMsg, 
                    desire_navMSG, 
@@ -288,6 +290,7 @@ void gps_vel_callback(const geometry_msgs::TwistStamped::ConstPtr& data);
 void quad_state_callback(const mavros_msgs::State::ConstPtr& data);
 void lpe_callback(const nav_msgs::Odometry::ConstPtr& data);
 void rcin_callback(const mavros_msgs::RCIn::ConstPtr& data);
+void rovio_callback(const nav_msgs::Odometry::ConstPtr& data);
 // void ukf_callback(const nav_msgs::Odometry::ConstPtr& data) {
 //   ukfMsg = *data;
 // }
@@ -334,7 +337,7 @@ ros::Publisher inav_error_pub ;// n.
 ros::Publisher vis_status_pub ;// n.
 ros::Publisher slam_reset_pub ;// n.a
 ros::Publisher local_pos_pub;
-
+ros::ServiceClient clientrovio;
 
 
 /////////////////////////////////////
@@ -493,6 +496,9 @@ int main(int argc, char **argv)
   ros::Subscriber odom_sub = n.subscribe<crossover_nav::odom_data>("/slam", 10, odom_callback);
   ros::Subscriber state_sub = n.subscribe<sensor_fusion_comm::DoubleArrayStamped>("/msf_core/state_out", 10, state_out_callback);
   ros::Subscriber rcin_sub = n.subscribe<mavros_msgs::RCIn>("/mavros/rc/in", 10, rcin_callback);
+  ros::Subscriber rovio_sub = n.subscribe<nav_msgs::Odometry>("/rovio/odometry", 10, rovio_callback);
+
+  clientrovio = n.serviceClient<rovio::SrvResetToPose>("rovio/reset_to_pose");
   // ros::Subscriber ukf_sub = n.subscribe<nav_msgs::Odometry>("/odometry/filtered", 10, ukf_callback);
 
 
@@ -899,13 +905,15 @@ int main(int argc, char **argv)
     // slam_prescale(cur_time);
 
     ///////////////////////////////TIMEOUT CHECK////////////////////////////////////////////////////
-        // SLAM Timeout check 
-    if(cur_time - odom_data.header.stamp > ros::Duration(1.0)) {
-      slam_stage = NOT_OK;
-      VISION_IS_READY = false;
-      VISION_STATE = false;
+        // SLAM Timeout check if not using rovio
+    if(cur_time - rovioMsg.header.stamp > ros::Duration(1.0)
+      && cur_time - odom_data.header.stamp > ros::Duration(1.0))
+    {
+        slam_stage = NOT_OK;
+        VISION_IS_READY = false;
+        VISION_STATE = false;
     }
-
+    
     // If quad armed but msf is not running.. try to re init
     static ros::Time msf_timeout_stamp = cur_time;
     if(cur_time - msf_timeout_stamp > ros::Duration(1.0) && quad_stateMsg.armed && !msf_is_running) {
@@ -1364,8 +1372,26 @@ inline void Init_filter() {
 
       ros::service::call("/MSF/position_pose_pressure_sensor/set_parameters", srv_req, srv_resp);
 }
+inline void RovioRESET(const tf::Vector3& p, const tf::Quaternion& q)
+{
 
+      rovio::SrvResetToPose srv;
+      geometry_msgs::Pose pose;
+      pose.position.x = p.x();
+      pose.position.y = p.y();
+      pose.position.z = p.z();
+      pose.orientation.x = q.x();
+      pose.orientation.y = q.y();
+      pose.orientation.z = q.z();
+      pose.orientation.w = q.w();
+      srv.request.T_WM = pose;
 
+      if (clientrovio.call(srv))
+      {
+        ROS_INFO("reset ROVIO");
+      }
+
+}
 
 
 void imu_callback(const sensor_msgs::Imu::ConstPtr& data) {
@@ -1499,6 +1525,262 @@ void lpe_callback(const nav_msgs::Odometry::ConstPtr& data) {
 void rcin_callback(const mavros_msgs::RCIn::ConstPtr& data) 
 {
   RCInMsg = *data;
+}
+void rovio_callback(const nav_msgs::Odometry::ConstPtr& data)
+{
+  rovioMsg = *data;
+
+  static float yaw_offset;
+  static float roll_offset;
+  static float pitch_offset;
+
+  static int sum_good = 0;
+  float cov_tran, cov_orient;
+
+  bool is_laging = (ros::Time::now().toSec()-rovioMsg.header.stamp.toSec() > 0.5 ? true:false);
+  bool is_high_cov = (rovioMsg.pose.covariance[0]>2 ? true:false);
+  //watchdog
+  if(is_laging || is_high_cov)
+  {
+    tf::Vector3 pos_init;
+    tf::Quaternion q_init = Qwi_;
+
+    if(msf_is_running)
+    {
+      pos_init = tf::Vector3(state_out.data[px],
+                             state_out.data[py],
+                             state_out.data[pz]);
+    }else
+      pos_init = tf::Vector3(0,0,0);
+
+    RovioRESET(pos_init,q_init);
+    sum_good = 0;
+  }
+    
+
+  if (!is_high_cov) {
+    ++sum_good;
+    sum_good = constrain(sum_good, 0 , 40);
+  //   if (sum_good < 40)
+  //     sum_good++;
+  //   if (slam_stage == READY_TO_USE) {
+  //     cov_tran = Max(cov_tran*0.95,VIS_POSITION_NOISE);
+  //   } else {
+  //     cov_tran = Min(cov_tran*1.15,10);
+  //   }
+  // } else {
+  //   if(sum_good<=0) sum_good=0;
+  //   else          --sum_good;
+  //   cov_tran = Min(cov_tran*1.15,10);
+  }else{
+    --sum_good;
+    sum_good = constrain(sum_good,0,40);
+  }
+
+  // if(cov_tran>10) cov_tran = 10;
+  // if(cov_tran<VIS_POSITION_NOISE) cov_tran =VIS_POSITION_NOISE;
+
+  // //try 
+  // if(VISION_STATE) {
+  //   cov_tran=VIS_POSITION_NOISE;
+  // }else{
+  //   cov_tran=10;
+  // }
+
+  // if(VISION_STATE && GPS_STATE) {
+  //   cov_tran=VIS_POSITION_NOISE*2*GPS_HACC_CUTOFF/Min(GPS_HACC_CUTOFF,GPS_hAcc);
+  // }
+
+  // //TODO  - depend it with number of tracked feature
+  // cov_orient = cov_tran*0.5;
+  //Updata covariance
+  odom_pose_filtered.pose.covariance = rovioMsg.pose.covariance;
+  // odom_pose_filtered.pose.covariance[7] = cov_tran;
+  // odom_pose_filtered.pose.covariance[14] = cov_tran;
+  // odom_pose_filtered.pose.covariance[21] = cov_orient;
+  // odom_pose_filtered.pose.covariance[28] = cov_orient;
+  // odom_pose_filtered.pose.covariance[35] = cov_orient;
+
+  //--------------------------------------------------------
+
+
+  tf::Quaternion pose_vc(rovioMsg.pose.pose.position.x, 
+                           rovioMsg.pose.pose.position.y, 
+                           rovioMsg.pose.pose.position.z,
+                           0);
+  tf::Quaternion q_vc_rebuild(rovioMsg.pose.pose.orientation.x, 
+                              rovioMsg.pose.pose.orientation.y, 
+                              rovioMsg.pose.pose.orientation.z, 
+                              rovioMsg.pose.pose.orientation.w);
+  q_vc_rebuild.normalize();
+
+  // printf("sumgood=%d \t stage = %d \n", sum_good,slam_stage);
+  if(slam_stage!=40)
+  //if data not collect enough .. nothing to do now. for prevent spike data
+  if (sum_good < 10 && sum_good!=0) { //1->9
+    slam_stage = NOT_OK;
+    // printf("VISION NOW NOT OK %d \n",sum_good);
+    return;
+  }else if(sum_good==0 && slam_stage == READY_TO_USE) {
+    slam_stage = READY_TO_INIT;
+    // printf("VISION bad 10 time then reinits\n");
+    return;
+  }else if(sum_good >=10 && slam_stage == NOT_OK ){ //10->
+    slam_stage = READY_TO_INIT;
+  }
+  
+
+
+
+// NOTE : 
+// STATE MACHINE
+//  NOT_OK = 0,  -> lost and waiting to reset
+//  READY_TO_INIT , --> tracked but wait for scaling 
+//  INITING --> prepare for 
+//  READY_TO_USE -->scalling 
+// };
+  static tf::Vector3 Pwv0(0,0,0);
+  static tf::Quaternion Qwv0;
+
+
+  //working with VIN init system-----------------------------
+  if(slam_stage == READY_TO_INIT/* && data.Scale_Inited*/) {
+    slam_stage = INITING;
+    Twv_Inited = false;
+    Pwv0.setZero();
+    Qwv0 = tf::Quaternion::getIdentity();
+  printf("\n\n------VINS system scaled-----\n\n");
+  }
+
+        //fixed value (please move to param ) (assume i frame and c frame are same place)
+        tf::Quaternion Qic (0,0,0,1);
+        tf::Quaternion Pic (0,0,0,0);
+
+
+  //Prepare offset
+  if (!Twv_Inited && slam_stage == INITING)
+  {
+    //We using imu quaternion buffer for delay compensate to achieve more accurate than current. then we should check imu are filled and not outdate.
+    if(QwiIsReady && (PwiIsReady || ORIGIN==INDOOR) )
+    {
+        Twv_Inited = true;
+    slam_stage = READY_TO_USE;
+    //INDOOR case we stuck when no Pwi from state due to not init filter so let Pwi zero
+    if(ORIGIN==INDOOR) Pwi_late.setZero();
+        //This below compute Twv that offset from world frame by Pic Qic relation.
+        //vision respected by camera is , (The translation Pcv is a rotated negative of Pvc:) Pcv = -Rvc^T*Pvc
+        tf::Quaternion pose_vc_minus(-rovioMsg.pose.pose.position.x, 
+                                     -rovioMsg.pose.pose.position.y, 
+                                     -rovioMsg.pose.pose.position.z,
+                                     0);
+        tf::Quaternion Pcv_ = (q_vc_rebuild.inverse()*pose_vc_minus*q_vc_rebuild);
+        tf::Quaternion Piv_ = Pic + Qic*Pcv_*Qic.inverse() ;
+        tf::Quaternion Pwi_late_ (Pwi_late.x(),Pwi_late.y(),Pwi_late.z(),0);
+        //check this eq Pwi should not be here 
+        tf::Quaternion Pwv0_ = Pwi_late_ + Qwi_late*(Piv_)*Qwi_late.inverse();
+        Pwv0 = Pwv0_.getAxis();
+        Qwv0 = Qwi_late * Qic * q_vc_rebuild.inverse();
+       
+        sayend("\n\n----------INIT OFFSET Twv----------\n\n");
+    }else{
+      ROS_INFO_THROTTLE(2,"Waiting for IMU and MSF for init Twv");
+    }
+  }
+
+
+
+  //ORIENTATION ROTATE ---------------------
+  //note cam_to_vision give us rpy that cam rotated
+  
+
+  /* Use method ref http://ros-users.122217.n3.nabble.com/tf-and-quaternions-td2206128.html
+  tf::Quaternion gyroscope_offset(tf::Vector3(0,0,1), M_PI/4.0);  // Axis/angle 
+  tf::Quaternion robot_rotation = stransform * gyroscope_offset.inverse(); 
+  */
+
+  // q_wv = q_wi qic qvc* this is offset if qic = identity (1,0,0,0) then qwv=qwi*qvc
+  // tf::Quaternion q_wv;
+  // q_wv.setRPY(roll_offset, pitch_offset+CAMERA_PITCH,yaw_offset);
+  tf::Quaternion q_wc = Qwv0 * q_vc_rebuild;
+  q_wc.normalize();
+  //just for get raw yaw that cam is -- to calibrate yaw offset online -- not the same place at 
+  tf::Matrix3x3 M_wc(q_wc);
+  double r_,p_,y_;
+  M_wc.getRPY(r_,p_,y_);
+
+  /*if(Twv_Inited) {
+    saytab(ROLL_IMU);saytab(PITCH_IMU);saytab(YAW_IMU);
+    saytab(r_);saytab(p_);sayend(y_);
+  }*/
+  //Public to global -- > for switching conditioning
+  YAW_SLAM_CALED = y_;
+
+
+  //VECTOR ROTATE ------------------------
+  // tf::Quaternion pose_vc(rovioMsg.pose.pose.position.z, -rovioMsg.pose.pose.position.x, -rovioMsg.pose.pose.position.y,0);
+
+  // pose_vc = q_wv*pose_vc*q_wv.inverse();
+
+  //cut term Pic because we send cam term (post compensate with)
+  tf::Vector3 Pwc = Pwv0 + tf::Quaternion(Qwv0*pose_vc*Qwv0.inverse() /*- Qwi_late*Pic*Qwi_late.inverse()*/).getAxis();
+
+
+  //Send out slam z position to pre-scale (outdated)
+  slam_before_scale = Pwc; //save for scale
+
+
+  if (slam_stage == READY_TO_USE) 
+  {
+
+    vision_scaled = (Pwc)/scale_slam;
+
+
+    odom_pose_filtered.header.stamp = rovioMsg.header.stamp;
+
+    odom_pose_filtered.pose.pose.position.x = vision_scaled.x() + 2*vision_offset.x();
+    odom_pose_filtered.pose.pose.position.y = vision_scaled.y() + 2*vision_offset.y();
+    odom_pose_filtered.pose.pose.position.z = vision_scaled.z() + 2*vision_offset.z();
+
+    odom_pose_filtered.pose.pose.orientation.w = q_wc.w();
+    odom_pose_filtered.pose.pose.orientation.x = q_wc.x();
+    odom_pose_filtered.pose.pose.orientation.y = q_wc.y();
+    odom_pose_filtered.pose.pose.orientation.z = q_wc.z();
+
+  /*printf("%.2f %.2f %.2f\n", Pwv0.x()
+               , Pwv0.y()
+               , Pwv0.z());*/
+
+    static tf::TransformBroadcaster br;
+    tf::Transform send_tf;
+    send_tf.setOrigin( Pwv0 + 2*vision_offset + tf::Vector3(state_out.data[pwvx],state_out.data[pwvy],state_out.data[pwvz]));
+    send_tf.setRotation(Qwv0);
+    br.sendTransform(tf::StampedTransform(send_tf, ros::Time::now(), "world", "vision"));
+
+    tf::Transform Tvc_scaled;
+    Tvc_scaled.setOrigin( pose_vc.getAxis()/state_out.data[L]);
+    Tvc_scaled.setRotation(q_vc_rebuild);
+    br.sendTransform(tf::StampedTransform(Tvc_scaled, ros::Time::now(), "vision", "cam_caled"));
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 }
 void state_out_callback(const sensor_fusion_comm::DoubleArrayStamped::ConstPtr& data) {
   state_out = *data;
