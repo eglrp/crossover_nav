@@ -43,11 +43,6 @@
 #include <termios.h>
 
 
-// First include the librealsense C++ header file
-#include <librealsense/rs.hpp>
-#include <atomic>
-#include <map>
-#include "concurrency.hpp"
 
 //function convert arduino to ros
 //------------ROS version-------
@@ -135,7 +130,8 @@ geometry_msgs::PoseWithCovarianceStamped poseMsg,
                                          odom_pose_filtered;
 geometry_msgs::TwistWithCovarianceStamped navvelOdomMsg;
 geometry_msgs::TwistStamped navvelMsg, 
-                            inertial_gps_vel;
+                            inertial_gps_vel,
+                            v_avoid_msgs;
 geometry_msgs::PointStamped baroaltABSMsg;
 double baroaltABSMsg_init;
 // geometry_msgs::Vector3Stamped magMsg;
@@ -228,12 +224,7 @@ double CAMERA_PITCH;
 double HOME_OFF_x;
 double HOME_OFF_y;
 bool REALSENSE_ENABLE=false;
-bool LR_EMITTER_ENABLED=true;
-bool LR_AUTO_EXPOSURE_ENABLED=false;
-int LR_GAIN;
-int LR_EXPOSURE; 
-bool TERMINAL_VISUALIZATION=false;
-
+double MIN_AGL_AVOID=0.5;
 
 enum {
   px=0,
@@ -291,6 +282,7 @@ void quad_state_callback(const mavros_msgs::State::ConstPtr& data);
 void lpe_callback(const nav_msgs::Odometry::ConstPtr& data);
 void rcin_callback(const mavros_msgs::RCIn::ConstPtr& data);
 void rovio_callback(const nav_msgs::Odometry::ConstPtr& data);
+void v_avoid_callback(const geometry_msgs::TwistStamped::ConstPtr& data);
 // void ukf_callback(const nav_msgs::Odometry::ConstPtr& data) {
 //   ukfMsg = *data;
 // }
@@ -347,27 +339,11 @@ void DRIVE_PATH(bool READY );
 enum {
   DRIVE_EIGHT_EQUATION=0
 };
-/////////////////////////////////////
-// Create a context object. This object owns the handles to all connected realsense devices.
-rs::context ctx;
-rs::device * dev = ctx.get_device(0);
-const auto streams = 1;
-std::vector<uint16_t> supported_streams = { (uint16_t)rs::stream::depth};
-const size_t max_queue_size = 1; // To minimize latency prefer frame drops
-single_consumer_queue<rs::frame> frames_queue[streams];
-// texture_buffer buffers[streams];
-std::atomic<bool> running(true);
 
-// Determine depth value corresponding to one meter
-const uint16_t one_meter = static_cast<uint16_t>(4.0f / dev->get_depth_scale());  
-float x_av=0.0;
-float y_av=0.0;
-int num_grid=0;
-int row_grid=-1;
 bool OBV_IS_ENABLED = false;
 bool OBV_IS_READY = false;
 inline bool IS_AGL_NOT_TOO_LOW() {
-  return (state_out.data[pz]-state_out.data[tz] > 0.5 ? true:false);
+  return (state_out.data[pz]-state_out.data[tz] > MIN_AGL_AVOID ? true:false);
 }
 inline void FIND_OBSTACLE();
 tf::Vector3 v_avoid;
@@ -415,11 +391,8 @@ int main(int argc, char **argv)
   n.param("HOME_LNG_NO_GPS", GPS_HOME.lng, 100.5025051);
 
   n.param("REALSENSE_ENABLE", REALSENSE_ENABLE, false);
-  n.param("LR_AUTO_EXPOSURE_ENABLED", LR_AUTO_EXPOSURE_ENABLED, false);
-  n.param("LR_EXPOSURE", LR_EXPOSURE, 7);
-  n.param("LR_GAIN", LR_GAIN, 200);
-  n.param("LR_EMITTER_ENABLED", LR_EMITTER_ENABLED, true);
-  n.param("TERMINAL_VISUALIZATION", TERMINAL_VISUALIZATION, false);
+  n.param("MIN_AGL_AVOID", MIN_AGL_AVOID, 0.5);
+
   // n.param("DEBUG_CONTROL_OUT" , DEBUG_CONTROL_OUT, false);
   // n.param("DEBUG_PPID_OUT"    , DEBUG_PPID_OUT, false);
   // n.param("DEBUG_PPID2_OUT"   , DEBUG_PPID2_OUT, false);
@@ -497,74 +470,11 @@ int main(int argc, char **argv)
   ros::Subscriber state_sub = n.subscribe<sensor_fusion_comm::DoubleArrayStamped>("/msf_core/state_out", 10, state_out_callback);
   ros::Subscriber rcin_sub = n.subscribe<mavros_msgs::RCIn>("/mavros/rc/in", 10, rcin_callback);
   ros::Subscriber rovio_sub = n.subscribe<nav_msgs::Odometry>("/rovio/odometry", 10, rovio_callback);
+  ros::Subscriber v_avoid_sub = n.subscribe<geometry_msgs::TwistStamped>("/v_avoid", 10, v_avoid_callback);
 
   clientrovio = n.serviceClient<rovio::SrvResetToPose>("rovio/reset_to_pose");
   // ros::Subscriber ukf_sub = n.subscribe<nav_msgs::Odometry>("/odometry/filtered", 10, ukf_callback);
 
-
-
-
-    if(REALSENSE_ENABLE)
-    {
-      printf("There are %d connected RealSense devices.\n", ctx.get_device_count());
-      if(ctx.get_device_count() == 0) 
-      {
-        printf("There is no realsense connected\nObstacle avoidance disabled");
-        OBV_IS_ENABLED = false;
-        OBV_IS_READY = false;
-      }else
-      {
-        OBV_IS_ENABLED = true;
-        // OBV_IS_READY = true;
-      }     
-      // This tutorial will access only a single device, but it is trivial to extend to multiple devices
-      printf("\nUsing device 0, an %s\n", dev->get_name());
-      printf("    Serial number: %s\n", dev->get_serial());
-      printf("    Firmware version: %s\n", dev->get_firmware_version());
-
-    struct resolution
-    {
-        int width;
-        int height;
-        rs::format format;
-    };
-    std::map<rs::stream, resolution> resolutions;
-
-    // if(dev->supports(rs::capabilities::infrared2))
-    //         supported_streams.push_back((uint16_t)rs::stream::infrared2);
-
-    for (auto i : supported_streams)
-    {
-        dev->set_frame_callback((rs::stream)i, [dev, &running, &frames_queue, &resolutions, i, max_queue_size](rs::frame frame)
-        {
-            if (running && frames_queue[i].size() <= max_queue_size) frames_queue[i].enqueue(std::move(frame));
-        });
-    }
-
-
-
-
-
-      // Configure depth to run at VGA resolution at 30 frames per second
-      dev->enable_stream(rs::stream::depth, 640, 480, rs::format::z16, 30);
-      // rs::option::r200_lr_auto_exposure_enabled;
-      bool aee = dev->get_option(rs::option::r200_lr_auto_exposure_enabled);
-      printf("Startup: autoexposure: %d\n",aee) ;
-      bool ee =  dev->get_option(rs::option::r200_emitter_enabled);
-      printf("Startup: Emitter: %d\n", ee) ;
-      dev->set_option(rs::option::r200_lr_auto_exposure_enabled, LR_AUTO_EXPOSURE_ENABLED);
-      dev->set_option(rs::option::r200_emitter_enabled, LR_EMITTER_ENABLED);
-      dev->set_option(rs::option::r200_lr_exposure, LR_EXPOSURE); //7 for outdoor 400 for indoor
-      dev->set_option(rs::option::r200_lr_gain, LR_GAIN);
-      aee = dev->get_option(rs::option::r200_lr_auto_exposure_enabled);
-      printf("Settings: autoexposure to: %d\n",aee) ;
-      ee =  dev->get_option(rs::option::r200_emitter_enabled);
-      printf("Settings: Emitter to: %d\n", ee) ;
-
-
-      dev->start();
-    }
-    
 
   
 
@@ -599,7 +509,8 @@ int main(int argc, char **argv)
             odom_pub_ts, 
             mag_ts,
             baroaltABS_ts,
-            state_fix_ts;
+            state_fix_ts,
+            v_avoid_ts;
   //initialize time
   imu_ts = 
   Nav_ts = 
@@ -615,6 +526,7 @@ int main(int argc, char **argv)
   mag_ts = 
   state_fix_ts = 
   baroaltABS_ts =
+  v_avoid_ts =
   ros::Time::now();
 
   int rosspin_count = 0;
@@ -749,45 +661,38 @@ int main(int argc, char **argv)
 
 
 
+    if(v_avoid_ts != v_avoid_msgs.header.stamp) {
+      v_avoid_ts = v_avoid_msgs.header.stamp;
 
+      if(REALSENSE_ENABLE)
+      {
+        OBV_IS_ENABLED = true;
 
-    //UPDATE STATUS
-    static ros::Time depth_task_stamp = cur_time;
+        if(OBV_IS_ENABLED && IS_AGL_NOT_TOO_LOW()) {
+          OBV_IS_READY=true;
+        }else{
+          OBV_IS_READY=false;
+        }
 
-    if(cur_time - depth_task_stamp > ros::Duration(0.033)) { //Depth from realsense task 30 hz 
-      depth_task_stamp = cur_time;
-      // when realsense is bad all system gone!! be careful 
-      // if(ctx.get_device_count()==0)  {
-      //   OBV_IS_ENABLED = false;
-      //   OBV_IS_READY = false;
-      // }else{
-      //   OBV_IS_ENABLED = true;
-      // }
-      if(OBV_IS_ENABLED && IS_AGL_NOT_TOO_LOW()) {
-        OBV_IS_READY=true;
-      }else{
-        OBV_IS_READY=false;
+        if(OBV_IS_READY)
+          FIND_OBSTACLE();
+
+      }else
+      {
+        OBV_IS_ENABLED = false;
+        OBV_IS_READY = false;
       }
 
-      if(OBV_IS_READY)
-        FIND_OBSTACLE();
     }
 
+    //AVOID CHECK TIMEOUT
+    static ros::Time depth_task_stamp = cur_time;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    if(cur_time - v_avoid_ts > ros::Duration(0.1)) { //Depth from realsense task 30 hz 
+      depth_task_stamp = cur_time;
+      OBV_IS_ENABLED = false;
+      OBV_IS_READY = false;
+    }
 
 
 
@@ -1764,24 +1669,18 @@ void rovio_callback(const nav_msgs::Odometry::ConstPtr& data)
   }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }
+
+
+
+void v_avoid_callback(const geometry_msgs::TwistStamped::ConstPtr& data)
+{
+  v_avoid_msgs = *data;
+}
+
+
+
+
 void state_out_callback(const sensor_fusion_comm::DoubleArrayStamped::ConstPtr& data) {
   state_out = *data;
   //ROS_INFO_STREAM("state\t"  << state_out.data[4] << "\t"  << state_out.data[5] << "\n" );
@@ -2166,8 +2065,8 @@ void DRIVE_PATH(bool READY ) {
     tf::Vector3 vd = (Qwi_ * vd_b * Qwi_.inverse()).getAxis();
 
 
-    des_hx_init+=(v_avoid.x()*0.1*3 + vd.x()*0.1);
-    des_hy_init+=(v_avoid.y()*0.1*3 + vd.y()*0.1);
+    des_hx_init+=(v_avoid.x()*0.1 + vd.x()*0.1);
+    des_hy_init+=(v_avoid.y()*0.1 + vd.y()*0.1);
     des_hz_init+=vd.z()*0.1;
 
     des_hx = des_hx_init;
@@ -2201,112 +2100,11 @@ void DRIVE_PATH(bool READY ) {
 inline void FIND_OBSTACLE() 
 {
 
-        rs::frame frame;
-        const uint16_t * depth_frame;// = reinterpret_cast<const uint16_t *>(dev->get_frame_data(rs::stream::depth));
-
-        for (auto i = 0; i < streams; i++)
-        {
-              if (frames_queue[i].try_dequeue(&frame))
-            {
-                // buffers[i].upload(frame);
-                depth_frame = reinterpret_cast<const uint16_t *>(frame.get_data());
-            }
-        }
-
-      //   // This call waits until a new coherent set of frames is available on a device
-      // // Calls to get_frame_data(...) and get_frame_timestamp(...) on a device will return stable values until wait_for_frames(...) is called
-      // dev->wait_for_frames();
-
-      // Retrieve depth data, which was previously configured as a 640 x 480 image of 16-bit depth values
-      // const uint16_t * depth_frame;// = reinterpret_cast<const uint16_t *>(dev->get_frame_data(rs::stream::depth));
-
-      // Print a simple text-based representation of the image, by breaking it into 10x20 pixel regions and and approximating the coverage of pixels within one meter
-      char buffer[(640/10+1)*(480/20)+1];
-      char * out = buffer;
-      int coverage[64] = {};
-      for(int y=0; y<480; ++y)
-      {
-          for(int x=0; x<640; ++x)
-          {
-              int depth = *depth_frame++;
-              if(depth > 0 && depth < one_meter) ++coverage[x/10];
-          }
-
-          if(y%20 == 19)
-          {
-              for(int & c : coverage)
-              {
-                  *out++ = " .:nhWWWW"[c/25]; //scale of depth (char)
-                  c = 0;
-              }
-              *out++ = '\n';
-          }
-      }
-      *out++ = 0;
-
-      x_av=32;
-      y_av=11;
-      num_grid=0;
-      for(int i=0;i<(640/10+1)*(480/20)+1;i++)
-      {
-          if(i%(640/10+1)==0) row_grid++;
-
-          if(buffer[i]=='W')
-              {
-                  x_av+=(i%(640/10+1));
-                  y_av+=row_grid;
-                  num_grid++;
-              }
-      }
-      if(num_grid!=0)
-      {
-          x_av/=num_grid;
-          y_av/=num_grid;
-          row_grid=-1;
-      }
-      x_av-=32;
-      y_av-=11;
-      if(TERMINAL_VISUALIZATION)
-        printf("\n%s", buffer);
-      // printf("\nweight = %.2f\t%.2f\t%d", x_av,y_av,num_grid);
-
-
-      //if x_av positive mean quad must left (+y body vel)
-      //if y_av positive mean object below quad must go up (+z body vel)
-      //center is zero,zero
-      //if num is positive quad must 
-      //y_av not used yet (height avoidance)
-      const float VEL_MAX = 0.5;
-      float x_conv = -((float)num_grid)/450;
-      float y_conv = VEL_MAX*(x_av/32)/**(((float)num_grid)/250)*/; //if num_grid is low (<20) mean obstacle maybe noise so be relax
-
-      if(y_conv>0)
-      { 
-        y_conv = Min(Max(y_conv,0),VEL_MAX);
-        y_conv = -y_conv + VEL_MAX+0.2;
-      }
-      else //(y_conv<0)
-      {
-        y_conv = Min(Max(y_conv,-VEL_MAX),0);
-        y_conv = -y_conv - VEL_MAX-0.2;
-      }
-
-      if(fabs(x_conv) < 0.3) x_conv=0;
-
-      if(num_grid < 10) y_conv =0;
-      tf::Vector3 vel_b_avoid(x_conv,
-                              y_conv,
-                              0);
-      // Uncommend this line below to visualize from terminal
-      //printf("\n%s", buffer);
-      
-      // convert this to earth frame
-
-      tf::Quaternion vel_b_q(vel_b_avoid.x(),
-                             vel_b_avoid.y(),
-                             vel_b_avoid.z(),
+      tf::Quaternion vel_b_q(v_avoid_msgs.twist.linear.x,
+                             v_avoid_msgs.twist.linear.y,
+                             v_avoid_msgs.twist.linear.z,
                              0);
       v_avoid = (Qwi_*vel_b_q*Qwi_.inverse()).getAxis();
 
-      printf("avoid = %.2f\t%.2f\n", vel_b_avoid.x(),vel_b_avoid.y()/**(((float)num_grid)/400)*/);
+      printf("avoid = %.2f\t%.2f\n", vel_b_q.x(),vel_b_q.y()/**(((float)num_grid)/400)*/);
 }

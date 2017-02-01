@@ -1,10 +1,12 @@
 <launch>
-    <param name="TERMINAL_VISUALIZATION" value="true" />
+    <param name="TERMINAL_VISUALIZATION" value="false" />
     <param name="LR_EMITTER_ENABLED" value="true" />
     <param name="LR_AUTO_EXPOSURE_ENABLED" value="false" />
-    <param name="LR_EXPOSURE" value="7" />
+    <param name="LR_EXPOSURE" value="200" /> <!-- indoor 200 outdoor night 400 sunlight 7 -->
     <param name="LR_GAIN" value="200" />
-    <param name="REALSENSE_ENABLE" value = "false" />
+    <param name="REALSENSE_ENABLE" value = "true" />
+    <param name="RANGE_TO_AVOID" value="1.0" />
+    <param name="MIN_AGL_AVOID" value="0.5" />
 
     <param name="DELAY_NAV" value="0.29" />
     <param name="HANDLE_OFF_SPD" value="0.05" /> <!-- 5% -->
@@ -38,6 +40,11 @@
     <param name="HOME_AT_ARM" value="true" />
     <param name="HOME_LAT_NO_GPS" value="7.0064177" />
     <param name="HOME_LNG_NO_GPS" value="100.5025051" />
+
+
+    <node name="VISION" pkg="ORB_SLAM2" type="NODE" output="screen" respawn="true" >
+
+    </node>
 
 
     <node name="crossover" pkg="crossover_nav" type="crossover" output="screen" respawn="true" >
